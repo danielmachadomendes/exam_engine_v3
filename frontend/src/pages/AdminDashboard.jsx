@@ -23,6 +23,9 @@ import {
   Download,
 } from 'lucide-react';
 
+const TABLE_ACTION_BUTTON_CLASS =
+  'inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/60';
+
 export default function AdminDashboard() {
   const { user, logout } = useAuth();
   const [activeTab, setActiveTab] = useState('users'); // 'users' | 'exams' | 'domains' | 'questions'
@@ -343,8 +346,8 @@ function UserApprovalsTab({ notify }) {
       <section className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
         <div className="p-4 border-b border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-3">
           <div>
-            <h3 className="text-lg font-bold text-white">User Table</h3>
-            <p className="text-xs text-slate-400">{pagination.total} registered users</p>
+            <h3 className="text-lg font-bold text-white">User table</h3>
+            <p className="text-xs text-slate-400">There's a total of {pagination.total} registered users.</p>
           </div>
           <div className="relative max-w-sm w-full">
             <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
@@ -386,35 +389,37 @@ function UserApprovalsTab({ notify }) {
                   <td className="py-4 px-6 text-slate-400 text-xs">
                     {new Date(u.created_at).toLocaleDateString()}
                   </td>
-                  <td className="py-4 px-6 text-right space-x-2">
-                    <button
-                      onClick={() => startEditing(u)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600/10 border border-indigo-500/20 text-indigo-400 text-xs font-semibold"
-                    >
-                      <Edit3 className="w-3.5 h-3.5" /> Edit
-                    </button>
-                    {u.status === 'pending' && (
+                  <td className="py-4 px-6 text-right whitespace-nowrap">
+                    <div className="flex justify-end gap-2">
                       <button
-                        onClick={() => handleStatusChange(u.id, 'approved')}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-600 hover:text-white text-xs font-semibold transition"
+                        onClick={() => startEditing(u)}
+                        className={`${TABLE_ACTION_BUTTON_CLASS} border-indigo-500/20 bg-indigo-600/10 text-indigo-300 hover:bg-indigo-600 hover:text-white`}
                       >
-                        <Check className="w-3.5 h-3.5" /> Approve
+                        <Edit3 className="h-3.5 w-3.5" /> Edit
                       </button>
-                    )}
-                    {u.status === 'pending' && (
+                      {u.status === 'pending' && (
+                        <button
+                          onClick={() => handleStatusChange(u.id, 'approved')}
+                          className={`${TABLE_ACTION_BUTTON_CLASS} border-emerald-500/20 bg-emerald-600/10 text-emerald-400 hover:bg-emerald-600 hover:text-white`}
+                        >
+                          <Check className="h-3.5 w-3.5" /> Approve
+                        </button>
+                      )}
+                      {u.status === 'pending' && (
+                        <button
+                          onClick={() => handleStatusChange(u.id, 'rejected')}
+                          className={`${TABLE_ACTION_BUTTON_CLASS} border-rose-500/20 bg-rose-600/10 text-rose-400 hover:bg-rose-600 hover:text-white`}
+                        >
+                          <X className="h-3.5 w-3.5" /> Reject
+                        </button>
+                      )}
                       <button
-                        onClick={() => handleStatusChange(u.id, 'rejected')}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600/10 border border-rose-500/20 text-rose-400 hover:bg-rose-600 hover:text-white text-xs font-semibold transition"
+                        onClick={() => deleteUser(u)}
+                        className={`${TABLE_ACTION_BUTTON_CLASS} border-rose-500/20 bg-rose-600/10 text-rose-300 hover:bg-rose-600 hover:text-white`}
                       >
-                        <X className="w-3.5 h-3.5" /> Reject
+                        <Trash2 className="h-3.5 w-3.5" /> Delete
                       </button>
-                    )}
-                    <button
-                      onClick={() => deleteUser(u)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600/10 border border-rose-500/20 text-rose-400 text-xs font-semibold"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" /> Delete
-                    </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -695,8 +700,8 @@ function ExamsManagerTab({ notify }) {
       <section className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
         <div className="p-4 border-b border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-3">
           <div>
-            <h3 className="text-lg font-bold text-white">Configured Exams</h3>
-            <p className="text-xs text-slate-400">{exams.length} exams configured</p>
+            <h3 className="text-lg font-bold text-white">Exam table</h3>
+            <p className="text-xs text-slate-400">There's a total of {exams.length} exams configured.</p>
           </div>
           <div className="relative max-w-sm w-full">
             <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
@@ -749,16 +754,18 @@ function ExamsManagerTab({ notify }) {
                     <td className="py-3.5 px-4 text-slate-300">
                       {`${exam.passing_score_percentage}%`}
                     </td>
-                    <td className="py-3.5 px-4 text-right whitespace-nowrap space-x-1.5">
-                      <button onClick={() => openEditExam(exam)} className="px-2 py-1 rounded bg-indigo-600/10 text-indigo-300 text-xs font-semibold">
-                        <Edit3 className="inline w-3 h-3 mr-1" /> Edit
-                      </button>
-                      <button
-                        onClick={() => deleteExam(exam)}
-                        className="px-2 py-1 rounded bg-rose-600/10 text-rose-300 text-xs font-semibold"
-                      >
-                        <Trash2 className="inline w-3 h-3" />
-                      </button>
+                    <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                      <div className="flex justify-end gap-2">
+                        <button onClick={() => openEditExam(exam)} className={`${TABLE_ACTION_BUTTON_CLASS} border-indigo-500/20 bg-indigo-600/10 text-indigo-300 hover:bg-indigo-600 hover:text-white`}>
+                          <Edit3 className="h-3.5 w-3.5" /> Edit
+                        </button>
+                        <button
+                          onClick={() => deleteExam(exam)}
+                          className={`${TABLE_ACTION_BUTTON_CLASS} border-rose-500/20 bg-rose-600/10 text-rose-300 hover:bg-rose-600 hover:text-white`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" /> Delete
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -952,8 +959,8 @@ function DomainsManagerTab({ notify }) {
       <section className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
         <div className="p-4 border-b border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <h3 className="text-lg font-bold text-white">All Domains</h3>
-            <p className="text-xs text-slate-400">Total of {allDomains.length} domains configured across all exams.</p>
+            <h3 className="text-lg font-bold text-white">Domain table</h3>
+            <p className="text-xs text-slate-400">There's a total of {allDomains.length} domains configured across all exams.</p>
           </div>
 
           {/* Filtros: por Exame e por Busca */}
@@ -1012,16 +1019,18 @@ function DomainsManagerTab({ notify }) {
                     <td className="py-3.5 px-4 text-emerald-400 font-mono">
                       {`${domain.weight_percentage}%`}
                     </td>
-                    <td className="py-3.5 px-4 text-right whitespace-nowrap space-x-1.5">
-                      <button onClick={() => openEditDomain(domain)} className="px-2 py-1 rounded bg-emerald-600/10 text-emerald-300 text-xs font-semibold">
-                        <Edit3 className="inline w-3 h-3 mr-1" /> Edit
-                      </button>
-                      <button
-                        onClick={() => deleteDomain(domain)}
-                        className="px-2 py-1 rounded bg-rose-600/10 text-rose-300 text-xs font-semibold"
-                      >
-                        <Trash2 className="inline w-3 h-3" />
-                      </button>
+                    <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                      <div className="flex justify-end gap-2">
+                        <button onClick={() => openEditDomain(domain)} className={`${TABLE_ACTION_BUTTON_CLASS} border-emerald-500/20 bg-emerald-600/10 text-emerald-300 hover:bg-emerald-600 hover:text-white`}>
+                          <Edit3 className="h-3.5 w-3.5" /> Edit
+                        </button>
+                        <button
+                          onClick={() => deleteDomain(domain)}
+                          className={`${TABLE_ACTION_BUTTON_CLASS} border-rose-500/20 bg-rose-600/10 text-rose-300 hover:bg-rose-600 hover:text-white`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" /> Delete
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -1375,8 +1384,8 @@ function QuestionManagerTab({ notify }) {
       <section className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
         <div className="p-4 border-b border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-3">
           <div>
-            <h3 className="text-lg font-bold text-white">Question Table</h3>
-            <p className="text-xs text-slate-400">Questions linked to their respective domain and parent exam.</p>
+            <h3 className="text-lg font-bold text-white">Question table</h3>
+            <p className="text-xs text-slate-400">There's a total of {questions.length} questions linked to their respective domain and parent exam.</p>
           </div>
           <div className="relative max-w-sm w-full">
             <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
@@ -1417,15 +1426,17 @@ function QuestionManagerTab({ notify }) {
                     {question.type === 'single_choice' ? 'Single choice' : question.type === 'multiple_choice' ? 'Multiple choice' : 'Drag and drop'}
                   </td>
                   <td className="py-3 px-4 text-right whitespace-nowrap">
-                    <button onClick={() => startQuestionEdit(question)} className="inline-flex items-center gap-1 rounded bg-indigo-600/10 px-2 py-1 mr-1 text-xs text-indigo-300">
-                      <Edit3 className="h-3 w-3" /> Edit
-                    </button>
-                    <button
-                      onClick={() => deleteQuestion(question)}
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded bg-rose-600/10 text-rose-300 text-xs"
-                    >
-                      <Trash2 className="w-3 h-3" /> Delete
-                    </button>
+                    <div className="flex justify-end gap-2">
+                      <button onClick={() => startQuestionEdit(question)} className={`${TABLE_ACTION_BUTTON_CLASS} border-indigo-500/20 bg-indigo-600/10 text-indigo-300 hover:bg-indigo-600 hover:text-white`}>
+                        <Edit3 className="h-3.5 w-3.5" /> Edit
+                      </button>
+                      <button
+                        onClick={() => deleteQuestion(question)}
+                        className={`${TABLE_ACTION_BUTTON_CLASS} border-rose-500/20 bg-rose-600/10 text-rose-300 hover:bg-rose-600 hover:text-white`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" /> Delete
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
