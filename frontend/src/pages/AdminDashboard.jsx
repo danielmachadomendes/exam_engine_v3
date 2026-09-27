@@ -516,7 +516,7 @@ function ExamsManagerTab({ notify }) {
 
       <div className="flex flex-wrap gap-2">
         <button onClick={openCreateExam} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500">
-          <Plus className="h-4 w-4" /> Create Exam
+          <Plus className="h-4 w-4" /> Create exam
         </button>
         <CsvTools entity="exams" notify={notify} onImported={fetchExams} />
       </div>
@@ -785,7 +785,7 @@ function DomainsManagerTab({ notify }) {
 
       <div className="flex flex-wrap gap-2">
         <button onClick={openCreateDomain} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500">
-          <Plus className="h-4 w-4" /> Add Domain
+          <Plus className="h-4 w-4" /> Add domain
         </button>
         <CsvTools entity="domains" notify={notify} onImported={fetchExams} />
       </div>
@@ -860,7 +860,7 @@ function DomainsManagerTab({ notify }) {
             <select
               value={filterExamId}
               onChange={(e) => setFilterExamId(e.target.value)}
-              className="w-full sm:w-auto px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-slate-100"
+              className="select-custom w-full pl-3 py-2 bg-slate-950/60 border border-slate-700/80 rounded-lg text-sm text-slate-100 cursor-pointer"
             >
               <option value="ALL">All Exams</option>
               {exams.map((ex) => (
@@ -1247,35 +1247,29 @@ function QuestionManagerTab({ notify }) {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-bold text-white tracking-tight">Question Management</h2>
-          <p className="text-sm text-slate-400">
-            Create single exam questions or bulk-import formatted JSON pools.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <CsvTools
-            entity="questions"
-            notify={notify}
-            onImported={() => setQuestionReload((value) => value + 1)}
-          />
-          <button
-            onClick={() => setQuestionModal('create')}
-            disabled={!selectedDomainId}
-            className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <Plus className="h-4 w-4" /> Add Question
-          </button>
-          <button
-            onClick={() => setQuestionModal('bulk')}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-800"
-          >
-            <Upload className="h-4 w-4" /> Bulk Import
-          </button>
-        </div>
+    <div className="space-y-8">
+      <div>
+        <h2 className="text-2xl font-bold text-white tracking-tight">Question Management</h2>
+        <p className="text-sm text-slate-400">
+          Create single exam questions or bulk-import formatted CSV files.
+        </p>
       </div>
+        
+      <div className="flex flex-wrap gap-2">
+        <button onClick={() => setQuestionModal('create')} disabled={!selectedDomainId} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
+          <Plus className="h-4 w-4" /> Add question
+        </button>
+        <CsvTools entity="questions" notify={notify} onImported={() => setQuestionReload((value) => value + 1)} />
+
+        {/* This was the original button for bulk JSON import, but it's commented out in the code.
+          <button
+          onClick={() => setQuestionModal('bulk')}
+          className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-800"
+        >
+          <Upload className="h-4 w-4" /> Import JSON
+        </button> */}
+      </div>
+
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-900 border border-slate-800 p-4 rounded-xl">
         <div>

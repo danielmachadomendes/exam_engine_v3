@@ -317,7 +317,7 @@ The admin dashboard can export and import CSV files in each Exams, Domains, and 
 Import in dependency order: exams, then domains, then questions.
 
 - Exams columns: `id,code,title,description,duration_minutes,total_questions,passing_score_percentage,is_active`. Exam codes must remain unique.
-- Domains columns: `id,exam_code,name,weight_percentage`. The parent exam is matched by `exam_code`; weights support up to two decimal places and total domain weight per exam cannot exceed 100%.
+- Domains columns: `id,exam_code,name,weight_percentage`. The parent exam is matched by `exam_code`; total domain weight per exam cannot exceed 100%.
 - Questions columns: `id,domain_id,exam_code,domain_name,question_text,type,options,correct_answers,explanation,is_active`. `options` and `correct_answers` are JSON arrays. Keep the exported `domain_id`, or leave it blank and match with both `exam_code` and `domain_name`. Supply `domain_id` if the name is ambiguous within an exam.
 
 Spreadsheet software may change JSON values when editing questions. Ensure the `options` and `correct_answers` cells still contain valid JSON arrays before importing.
@@ -415,13 +415,6 @@ Backend syntax check:
 
 ```powershell
 node --check backend\routes\admin.js
-```
-
-Backend CSV tests:
-
-```powershell
-cd backend
-npm test
 ```
 
 Frontend production build:
