@@ -1,4 +1,4 @@
-import React, { useCallback, useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { adminApi, apiFetch } from '../services/api';
 import AdminModal from '../components/AdminModal';
@@ -19,7 +19,8 @@ import {
   Edit3,
   Save,
   Search,
-  BookOpen
+  BookOpen,
+  Download,
 } from 'lucide-react';
 
 export default function AdminDashboard() {
@@ -125,6 +126,84 @@ export default function AdminDashboard() {
         {activeTab === 'domains' && <DomainsManagerTab notify={showNotification} />}
         {activeTab === 'questions' && <QuestionManagerTab notify={showNotification} />}
       </main>
+    </div>
+  );
+}
+
+function CsvTools({ entity, notify, onImported }) {
+  const fileInput = useRef(null);
+  const [busy, setBusy] = useState(false);
+
+  const exportCsv = async () => {
+    setBusy(true);
+    try {
+      const blob = await adminApi.exportCsv(entity);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${entity}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      notify('error', err.message || `Failed to export ${entity}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const importCsv = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    event.target.value = '';
+    if (!file.name.toLowerCase().endsWith('.csv')) {
+      notify('error', 'Choose a .csv file');
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      notify('error', 'CSV files cannot be larger than 10 MB');
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const result = await adminApi.importCsv(entity, await file.text());
+      notify('success', result.message || `${entity} imported successfully`);
+      await onImported();
+    } catch (err) {
+      notify('error', err.message || `Failed to import ${entity}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <input
+        ref={fileInput}
+        type="file"
+        accept=".csv,text/csv"
+        onChange={importCsv}
+        className="hidden"
+      />
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => fileInput.current?.click()}
+        className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-800 disabled:opacity-50"
+      >
+        <Upload className="h-4 w-4" /> Import CSV
+      </button>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={exportCsv}
+        className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-800 disabled:opacity-50"
+      >
+        <Download className="h-4 w-4" /> Export CSV
+      </button>
+      <span className="text-xs text-slate-500">Keep IDs to update; blank IDs add rows. Missing rows are not deleted.</span>
     </div>
   );
 }
@@ -435,9 +514,12 @@ function ExamsManagerTab({ notify }) {
         </p>
       </div>
 
-      <button onClick={openCreateExam} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500">
-        <Plus className="h-4 w-4" /> Create Exam
-      </button>
+      <div className="flex flex-wrap gap-2">
+        <button onClick={openCreateExam} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500">
+          <Plus className="h-4 w-4" /> Create Exam
+        </button>
+        <CsvTools entity="exams" notify={notify} onImported={fetchExams} />
+      </div>
 
       <AdminModal
         open={examModalOpen}
@@ -701,9 +783,12 @@ function DomainsManagerTab({ notify }) {
         </p>
       </div>
 
-      <button onClick={openCreateDomain} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500">
-        <Plus className="h-4 w-4" /> Add Domain
-      </button>
+      <div className="flex flex-wrap gap-2">
+        <button onClick={openCreateDomain} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500">
+          <Plus className="h-4 w-4" /> Add Domain
+        </button>
+        <CsvTools entity="domains" notify={notify} onImported={fetchExams} />
+      </div>
 
       <AdminModal
         open={domainModalOpen}
@@ -1170,7 +1255,12 @@ function QuestionManagerTab({ notify }) {
             Create single exam questions or bulk-import formatted JSON pools.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <CsvTools
+            entity="questions"
+            notify={notify}
+            onImported={() => setQuestionReload((value) => value + 1)}
+          />
           <button
             onClick={() => setQuestionModal('create')}
             disabled={!selectedDomainId}

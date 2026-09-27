@@ -55,6 +55,7 @@ app.use(cors({
     callback(null, !origin || allowedOrigins.has(origin));
   },
 }));
+app.use(express.text({ type: ['text/csv', 'application/csv'], limit: '10mb' }));
 app.use(express.json());
 
 // Routes

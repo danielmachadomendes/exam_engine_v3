@@ -29,6 +29,22 @@ export async function apiFetch(endpoint, options = {}) {
   return data;
 }
 
+async function downloadCsv(endpoint) {
+  const token = localStorage.getItem('token');
+  const response = await fetch(`${BASE_URL}${endpoint}`, {
+    headers: {
+      Accept: 'text/csv',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.message || 'CSV export failed');
+  }
+  return response.blob();
+}
+
 // API methods auxiliares
 export const authApi = {
   login: (credentials) =>
@@ -54,6 +70,13 @@ export const adminApi = {
       body: JSON.stringify({ status }),
     }),
   getExams: () => apiFetch('/admin/exams'),
+  importCsv: (entity, csv) =>
+    apiFetch(`/admin/${entity}/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/csv' },
+      body: csv,
+    }),
+  exportCsv: (entity) => downloadCsv(`/admin/${entity}/export`),
   createExam: (data) => apiFetch('/admin/exams', { method: 'POST', body: JSON.stringify(data) }),
   updateExam: (id, data) =>
     apiFetch(`/admin/exams/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),

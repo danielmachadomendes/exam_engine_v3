@@ -2,6 +2,7 @@
 const router = express.Router();
 const pool = require('../db');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
+const { parseCsv, serializeCsv, requireHeaders } = require('../utils/csv');
 
 router.use(authenticateToken, requireAdmin);
 
@@ -165,6 +166,73 @@ async function validateDomainWeight(examId, candidateWeight, excludeDomainId = n
   const total = Number(row.rows[0].total_weight || 0) + Number(candidateWeight);
   if (total > 100) {
     throw new Error('Total domain weight cannot exceed 100%. Current total is ' + Number(row.rows[0].total_weight || 0).toFixed(2) + '%, attempting to add ' + Number(candidateWeight).toFixed(2) + '%.');
+  }
+}
+
+function csvRowError(row, message, status = 400) {
+  const error = new Error('Row ' + row.line + ': ' + message);
+  error.status = status;
+  throw error;
+}
+
+function parseCsvBoolean(value, field, row) {
+  if (value.trim() === '') return csvRowError(row, field + ' must be true or false');
+  const normalized = value.trim().toLowerCase();
+  if (['true', '1'].includes(normalized)) return true;
+  if (['false', '0'].includes(normalized)) return false;
+  return csvRowError(row, field + ' must be true or false');
+}
+
+function parseCsvNumber(value, field, row, min, max, integer = false) {
+  const number = Number(value);
+  if (!value.trim() || !Number.isFinite(number) || (integer && !Number.isInteger(number))) {
+    return csvRowError(row, field + ' must be a valid ' + (integer ? 'integer' : 'number'));
+  }
+  if (number < min || number > max) {
+    return csvRowError(row, field + ' must be between ' + min + ' and ' + max);
+  }
+  return number;
+}
+
+function parseCsvRequest(req, required) {
+  if (typeof req.body !== 'string') throw new Error('Upload a CSV file with a text/csv content type');
+  const parsed = parseCsv(req.body);
+  requireHeaders(parsed.headers, required);
+  return parsed.rows;
+}
+
+async function handleCsvImport(req, res, requiredHeaders, defaultMessage, processRows) {
+  let rows;
+  try {
+    rows = parseCsvRequest(req, requiredHeaders);
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+
+  let client;
+  let transactionStarted = false;
+  try {
+    client = await pool.connect();
+    await client.query('BEGIN');
+    transactionStarted = true;
+    const result = await processRows(client, rows);
+    await client.query('COMMIT');
+    return res.status(200).json({
+      message: `Import complete: ${result.created} created, ${result.updated} updated.`,
+      ...result,
+    });
+  } catch (error) {
+    if (transactionStarted) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackError) {
+        console.error('CSV import rollback failed:', rollbackError);
+      }
+    }
+    if (error && error.status) return res.status(error.status).json({ message: error.message });
+    return mapDbError(res, error, defaultMessage);
+  } finally {
+    if (client) client.release();
   }
 }
 
@@ -828,5 +896,276 @@ router.post('/questions/bulk', async (req, res) => {
     client.release();
   }
 });
+
+router.get('/exams/export', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, code, title, description, duration_minutes, total_questions, passing_score_percentage, is_active FROM exams ORDER BY code'
+    );
+    const headers = ['id', 'code', 'title', 'description', 'duration_minutes', 'total_questions', 'passing_score_percentage', 'is_active'];
+    res.type('text/csv; charset=utf-8');
+    res.set('Content-Disposition', 'attachment; filename="exams.csv"');
+    return res.status(200).send(serializeCsv(headers, result.rows));
+  } catch (error) {
+    return mapDbError(res, error, 'Export exams error');
+  }
+});
+
+router.post('/exams/import', async (req, res) => handleCsvImport(
+  req,
+  res,
+  ['id', 'code', 'title', 'description', 'duration_minutes', 'total_questions', 'passing_score_percentage', 'is_active'],
+  'Import exams failed',
+  async (client, rows) => {
+    const seenIds = new Set();
+    let created = 0;
+    let updated = 0;
+
+    for (const row of rows) {
+      const { id = '', code = '', title = '', description = '' } = row.values;
+      const recordId = id.trim().toLowerCase();
+      const cleanCode = normalizeText(code);
+      const cleanTitle = normalizeText(title);
+      if (recordId && !isUuid(recordId)) csvRowError(row, 'id must be a valid UUID or blank');
+      if (!cleanCode || !cleanTitle) csvRowError(row, 'code and title are required');
+      if (recordId && seenIds.has(recordId)) csvRowError(row, 'id appears more than once in this file');
+      if (recordId) seenIds.add(recordId);
+
+      const duration = parseCsvNumber(row.values.duration_minutes, 'duration_minutes', row, 1, 10000, true);
+      const total = parseCsvNumber(row.values.total_questions, 'total_questions', row, 1, 10000, true);
+      const passingScore = parseCsvNumber(row.values.passing_score_percentage, 'passing_score_percentage', row, 0, 100);
+      const active = parseCsvBoolean(row.values.is_active, 'is_active', row);
+      const values = [
+        cleanCode.toUpperCase(),
+        cleanTitle,
+        normalizeText(description) || null,
+        duration,
+        total,
+        passingScore,
+        active,
+      ];
+
+      if (recordId) {
+        const result = await client.query(
+          'UPDATE exams SET code = $1, title = $2, description = $3, duration_minutes = $4, total_questions = $5, passing_score_percentage = $6, is_active = $7, updated_at = CURRENT_TIMESTAMP WHERE id = $8 RETURNING id',
+          [...values, recordId]
+        );
+        if (!result.rows.length) csvRowError(row, 'exam id was not found', 404);
+        updated += 1;
+      } else {
+        await client.query(
+          'INSERT INTO exams (code, title, description, duration_minutes, total_questions, passing_score_percentage, is_active) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+          values
+        );
+        created += 1;
+      }
+    }
+
+    return { created, updated };
+  }
+));
+
+router.get('/domains/export', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT d.id, e.code AS exam_code, d.name, d.weight_percentage FROM domains d JOIN exams e ON e.id = d.exam_id ORDER BY e.code, d.name'
+    );
+    const headers = ['id', 'exam_code', 'name', 'weight_percentage'];
+    res.type('text/csv; charset=utf-8');
+    res.set('Content-Disposition', 'attachment; filename="domains.csv"');
+    return res.status(200).send(serializeCsv(headers, result.rows));
+  } catch (error) {
+    return mapDbError(res, error, 'Export domains error');
+  }
+});
+
+router.post('/domains/import', async (req, res) => handleCsvImport(
+  req,
+  res,
+  ['id', 'exam_code', 'name', 'weight_percentage'],
+  'Import domains failed',
+  async (client, rows) => {
+    const examResult = await client.query('SELECT id, code FROM exams FOR UPDATE');
+    const examsByCode = new Map(examResult.rows.map((exam) => [String(exam.code).toUpperCase(), exam]));
+    const totalsByExam = new Map(examResult.rows.map((exam) => [exam.id, 0]));
+    const domainsResult = await client.query(
+      'SELECT d.id, d.exam_id, d.weight_percentage FROM domains d JOIN exams e ON e.id = d.exam_id FOR UPDATE OF d'
+    );
+    const domainsById = new Map();
+    for (const domain of domainsResult.rows) {
+      const domainValue = {
+        exam_id: domain.exam_id,
+        weight: Number(domain.weight_percentage),
+      };
+      domainsById.set(domain.id, domainValue);
+      totalsByExam.set(domain.exam_id, (totalsByExam.get(domain.exam_id) || 0) + domainValue.weight);
+    }
+
+    const prepared = [];
+    const affectedExams = new Map();
+    const seenIds = new Set();
+    for (const row of rows) {
+      const { id = '', exam_code = '', name = '', weight_percentage = '' } = row.values;
+      const recordId = id.trim().toLowerCase();
+      if (recordId && !isUuid(recordId)) csvRowError(row, 'id must be a valid UUID or blank');
+      if (recordId && seenIds.has(recordId)) csvRowError(row, 'id appears more than once in this file');
+      if (recordId) seenIds.add(recordId);
+
+      const exam = examsByCode.get(String(exam_code).trim().toUpperCase());
+      if (!exam) csvRowError(row, `exam_code "${exam_code}" was not found`);
+      const cleanName = normalizeText(name);
+      if (!cleanName) csvRowError(row, 'name is required');
+      const weight = parseCsvNumber(weight_percentage, 'weight_percentage', row, 0.01, 100);
+      if (Math.round(weight * 100) !== weight * 100) {
+        csvRowError(row, 'weight_percentage can have at most two decimal places');
+      }
+      const existing = recordId ? domainsById.get(recordId) : null;
+      if (recordId && !existing) csvRowError(row, 'domain id was not found', 404);
+      if (existing) {
+        totalsByExam.set(existing.exam_id, totalsByExam.get(existing.exam_id) - existing.weight);
+        affectedExams.set(existing.exam_id, row);
+      }
+      totalsByExam.set(exam.id, (totalsByExam.get(exam.id) || 0) + weight);
+      affectedExams.set(exam.id, row);
+      prepared.push({ row, id: recordId, exam_id: exam.id, name: cleanName, weight });
+    }
+
+    for (const [examId, row] of affectedExams) {
+      const total = totalsByExam.get(examId);
+      if (total > 100.00001) {
+        const exam = examResult.rows.find((item) => item.id === examId);
+        csvRowError(row, `domain weights for exam ${exam.code} total ${total.toFixed(2)}%, exceeding 100%`);
+      }
+    }
+
+    let created = 0;
+    let updated = 0;
+    for (const item of prepared) {
+      if (item.id) {
+        await client.query(
+          'UPDATE domains SET exam_id = $1, name = $2, weight_percentage = $3 WHERE id = $4',
+          [item.exam_id, item.name, item.weight, item.id]
+        );
+        updated += 1;
+      } else {
+        await client.query(
+          'INSERT INTO domains (exam_id, name, weight_percentage) VALUES ($1, $2, $3)',
+          [item.exam_id, item.name, item.weight]
+        );
+        created += 1;
+      }
+    }
+    return { created, updated };
+  }
+));
+
+router.get('/questions/export', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT q.id, q.domain_id, e.code AS exam_code, d.name AS domain_name, q.question_text, q.type, q.options, q.correct_answers, q.explanation, q.is_active FROM questions q JOIN domains d ON d.id = q.domain_id JOIN exams e ON e.id = d.exam_id ORDER BY e.code, d.name, q.created_at, q.id'
+    );
+    const headers = ['id', 'domain_id', 'exam_code', 'domain_name', 'question_text', 'type', 'options', 'correct_answers', 'explanation', 'is_active'];
+    res.type('text/csv; charset=utf-8');
+    res.set('Content-Disposition', 'attachment; filename="questions.csv"');
+    return res.status(200).send(serializeCsv(headers, result.rows));
+  } catch (error) {
+    return mapDbError(res, error, 'Export questions error');
+  }
+});
+
+router.post('/questions/import', async (req, res) => handleCsvImport(
+  req,
+  res,
+  ['id', 'domain_id', 'exam_code', 'domain_name', 'question_text', 'type', 'options', 'correct_answers', 'explanation', 'is_active'],
+  'Import questions failed',
+  async (client, rows) => {
+    const seenIds = new Set();
+    let created = 0;
+    let updated = 0;
+
+    for (const row of rows) {
+      const {
+        id = '',
+        domain_id: suppliedDomainId = '',
+        exam_code: examCode = '',
+        domain_name: domainName = '',
+        question_text: questionText = '',
+        type = '',
+        options: optionsJson = '',
+        correct_answers: correctAnswersJson = '',
+        explanation = '',
+      } = row.values;
+      const recordId = id.trim().toLowerCase();
+      if (recordId && !isUuid(recordId)) csvRowError(row, 'id must be a valid UUID or blank');
+      if (recordId && seenIds.has(recordId)) csvRowError(row, 'id appears more than once in this file');
+      if (recordId) seenIds.add(recordId);
+
+      const cleanText = normalizeText(questionText);
+      const kind = normalizeText(type);
+      if (!cleanText) csvRowError(row, 'question_text is required');
+      if (!VALID_QUESTION_TYPES.has(kind)) csvRowError(row, 'type must be single_choice, multiple_choice, or drag_and_drop');
+
+      let options;
+      let correctAnswers;
+      try {
+        options = JSON.parse(optionsJson);
+      } catch {
+        csvRowError(row, 'options must contain a valid JSON array');
+      }
+      try {
+        correctAnswers = JSON.parse(correctAnswersJson);
+      } catch {
+        csvRowError(row, 'correct_answers must contain a valid JSON array');
+      }
+      const contentError = validateQuestionContent(kind, options, correctAnswers);
+      if (contentError) csvRowError(row, contentError);
+
+      let domainId = suppliedDomainId.trim();
+      if (domainId) {
+        if (!isUuid(domainId)) csvRowError(row, 'domain_id must be a valid UUID');
+        const domain = await client.query('SELECT id FROM domains WHERE id = $1', [domainId]);
+        if (!domain.rows.length) csvRowError(row, 'domain_id was not found', 404);
+      } else {
+        if (!examCode.trim() || !domainName.trim()) {
+          csvRowError(row, 'domain_id or both exam_code and domain_name are required');
+        }
+        const domain = await client.query(
+          'SELECT d.id FROM domains d JOIN exams e ON e.id = d.exam_id WHERE upper(e.code) = upper($1) AND lower(trim(d.name)) = lower(trim($2))',
+          [examCode.trim(), domainName.trim()]
+        );
+        if (domain.rows.length !== 1) {
+          csvRowError(row, domain.rows.length ? 'exam_code and domain_name match multiple domains' : 'exam_code and domain_name do not match a domain', domain.rows.length ? 400 : 404);
+        }
+        domainId = domain.rows[0].id;
+      }
+
+      const values = [
+        domainId,
+        cleanText,
+        kind,
+        JSON.stringify(options),
+        JSON.stringify(correctAnswers),
+        normalizeText(explanation) || null,
+        parseCsvBoolean(row.values.is_active, 'is_active', row),
+      ];
+      if (recordId) {
+        const result = await client.query(
+          'UPDATE questions SET domain_id = $1, question_text = $2, type = $3, options = $4::jsonb, correct_answers = $5::jsonb, explanation = $6, is_active = $7, updated_at = CURRENT_TIMESTAMP WHERE id = $8 RETURNING id',
+          [...values, recordId]
+        );
+        if (!result.rows.length) csvRowError(row, 'question id was not found', 404);
+        updated += 1;
+      } else {
+        await client.query(
+          'INSERT INTO questions (domain_id, question_text, type, options, correct_answers, explanation, is_active) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7)',
+          values
+        );
+        created += 1;
+      }
+    }
+
+    return { created, updated };
+  }
+));
 
 module.exports = router;

@@ -291,10 +291,14 @@ All administrator endpoints require an approved JWT whose role is `admin`.
 | `GET` | `/admin/exams` | List exams with nested domains and relationship counts |
 | `PATCH` | `/admin/exams/:id` | Edit exam configuration |
 | `DELETE` | `/admin/exams/:id` | Delete an exam and cascading content |
+| `GET` | `/admin/exams/export` | Export all exams as CSV |
+| `POST` | `/admin/exams/import` | Create or update exams from CSV |
 | `POST` | `/admin/domains` | Create a domain under an exam |
 | `GET` | `/admin/domains` | List domains with parent exam and question counts |
 | `PATCH` | `/admin/domains/:id` | Edit a domain |
 | `DELETE` | `/admin/domains/:id` | Delete a domain and its questions |
+| `GET` | `/admin/domains/export` | Export all domains as CSV |
+| `POST` | `/admin/domains/import` | Create or update domains from CSV |
 
 ### Administrator questions
 
@@ -305,6 +309,18 @@ All administrator endpoints require an approved JWT whose role is `admin`.
 | `PATCH` | `/admin/questions/:id` | Edit question content or move it to another domain |
 | `DELETE` | `/admin/questions/:id` | Permanently delete a question |
 | `POST` | `/admin/questions/bulk` | Import an array of questions in one transaction |
+| `GET` | `/admin/questions/export` | Export all questions as CSV |
+| `POST` | `/admin/questions/import` | Create or update questions from CSV |
+
+The admin dashboard can export and import CSV files in each Exams, Domains, and Questions tab. Exported files can be edited in a spreadsheet and uploaded again. Keep the `id` column to update a record; leave it blank to insert a new one. Omitted rows are not deleted. Each CSV import is atomic, reports validation errors by row, and accepts up to 5,000 rows and 10 MB.
+
+Import in dependency order: exams, then domains, then questions.
+
+- Exams columns: `id,code,title,description,duration_minutes,total_questions,passing_score_percentage,is_active`. Exam codes must remain unique.
+- Domains columns: `id,exam_code,name,weight_percentage`. The parent exam is matched by `exam_code`; weights support up to two decimal places and total domain weight per exam cannot exceed 100%.
+- Questions columns: `id,domain_id,exam_code,domain_name,question_text,type,options,correct_answers,explanation,is_active`. `options` and `correct_answers` are JSON arrays. Keep the exported `domain_id`, or leave it blank and match with both `exam_code` and `domain_name`. Supply `domain_id` if the name is ambiguous within an exam.
+
+Spreadsheet software may change JSON values when editing questions. Ensure the `options` and `correct_answers` cells still contain valid JSON arrays before importing.
 
 Example question:
 
@@ -357,7 +373,7 @@ Password hashes are never returned to the frontend. Password changes are not par
 
 ### Exams and domains
 
-The Exams & Domains tabs use relationship tables. Each domain appears beneath its parent exam and exposes its weight. Exam configuration and domain values are edited in reusable modal forms.
+The Exams & Domains tabs use relationship tables. Each domain appears beneath its parent exam and exposes its weight. Exam configuration and domain values are edited in reusable modal forms or updated in bulk using CSV export/import.
 
 Domain weights cannot exceed 100% in total for an exam.
 
@@ -369,6 +385,7 @@ The Question Manager provides:
 - Drag-and-drop matching key entry, with every prompt assigned a distinct match
 - Exam takers can drag a match onto a prompt or select it from an accessible control; grading requires the complete correct set of pairs
 - Bulk JSON upload for importing a question array
+- CSV export/import for editing the complete question bank in a spreadsheet
 - Modal editing for question text, type, domain, options, and correct answers
 
 The question table exposes the parent exam and domain, making relationship navigation visible while editing.
@@ -398,6 +415,13 @@ Backend syntax check:
 
 ```powershell
 node --check backend\routes\admin.js
+```
+
+Backend CSV tests:
+
+```powershell
+cd backend
+npm test
 ```
 
 Frontend production build:
