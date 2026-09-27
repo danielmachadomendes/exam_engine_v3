@@ -53,7 +53,7 @@ function parsePagination(query) {
 
 function validateQuestionContent(type, options, correctAnswers) {
   if (!VALID_QUESTION_TYPES.has(type)) {
-    return 'type must be either single_choice or multiple_choice';
+    return 'type must be single_choice, multiple_choice, or drag_and_drop';
   }
   if (
     !Array.isArray(options) ||

@@ -44,7 +44,8 @@ exam_engine_v3/
 │   ├── middleware/
 │   │   └── auth.js          # JWT and administrator authorization
 │   ├── migrations/
-│   │   └── 20260927_add_drag_and_drop_question_type.sql
+│   │   ├── 20260927_add_drag_and_drop_question_type.sql
+│   │   └── 20260928_add_multiple_choice_question_type.sql
 │   ├── routes/
 │   │   ├── auth.js          # Registration and login
 │   │   ├── users.js         # Authenticated user profile
@@ -88,13 +89,14 @@ exams
 Domains use `weight_percentage` to distribute questions during an exam. Questions store their options and correct answers as JSONB.
 Questions support `single_choice`, `multiple_choice`, and `drag_and_drop` types. Questions have between two and fourteen answer options. Single-choice questions must identify exactly one correct option. Drag-and-drop questions use an even number of options split into prompt and match columns, so they contain 1–7 pairs. `correct_answers` stores each pair as `[prompt_id, match_id]`, for example `[["a", "h"], ["b", "i"], ["c", "j"], ["d", "k"], ["e", "l"], ["f", "m"], ["g", "n"]]`. Every prompt and every match must appear exactly once.
 
-For an existing database, apply `backend/migrations/20260927_add_drag_and_drop_question_type.sql` before deploying the application. For example, with `psql` and `DATABASE_URL` set:
+For an existing database, apply the question-type migrations before deploying the application. For example, with `psql` and `DATABASE_URL` set:
 
 ```powershell
 psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\20260927_add_drag_and_drop_question_type.sql
+psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\20260928_add_multiple_choice_question_type.sql
 ```
 
-New installations include the type in `backend/database.sql`.
+New installations include all question types in `backend/database.sql`. The migrations use `IF NOT EXISTS`, so they are safe to apply when the enum labels are already present.
 
 The admin user and question listing endpoints accept `search`, `page`, and `page_size` query parameters (in addition to their existing filters). `page` defaults to `1`, `page_size` defaults to `25` and is capped at `100`. Responses include a `pagination` object with `page`, `page_size`, `total`, and `total_pages`.
 

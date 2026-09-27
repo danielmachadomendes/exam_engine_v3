@@ -1321,6 +1321,10 @@ function QuestionManagerTab({ notify }) {
   };
 
   const activeDomains = exams.find((e) => e.id === selectedExamId)?.domains || [];
+  const editDomainExam = exams.find((exam) =>
+    exam.domains?.some((domain) => domain.id === questionEdit.domain_id)
+  );
+  const editDomains = editDomainExam?.domains || [];
   const startQuestionEdit = (question) => {
     setEditingQuestionId(question.id);
     setQuestionEdit({
@@ -1526,18 +1530,18 @@ function QuestionManagerTab({ notify }) {
                 const selectedRight = correctAnswers.find((pair) => pair[0] === leftOption.id)?.[1] || '';
                 const otherSelections = correctAnswers.filter((pair) => pair[0] !== leftOption.id).map((pair) => pair[1]);
                 return (
-                  <div key={leftOption.id} className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <div key={leftOption.id} className="grid grid-cols-1 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
                     <label className="flex items-center gap-2 text-xs text-slate-400">
                       <span className="w-6 font-bold uppercase">{leftOption.id}</span>
                       <input required value={leftOption.text} onChange={(e) => handleOptionChange(index, e.target.value)} placeholder={`Prompt ${leftOption.id.toUpperCase()}`} className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" />
                     </label>
+                    <select required aria-label={`Correct match for ${leftOption.id}`} value={selectedRight} onChange={(e) => updateMatchingAnswer(leftOption.id, e.target.value)} className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-slate-100">
+                      <option value="">Pair with</option>
+                      {rightOptions.map((option) => <option key={option.id} value={option.id} disabled={otherSelections.includes(option.id)}>{option.id.toUpperCase()}</option>)}
+                    </select>
                     <label className="flex items-center gap-2 text-xs text-slate-400">
                       <span className="w-6 font-bold uppercase">{rightOptions[index].id}</span>
                       <input required value={rightOptions[index].text} onChange={(e) => handleOptionChange(index + rightOptions.length, e.target.value)} placeholder={`Match ${rightOptions[index].id.toUpperCase()}`} className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" />
-                      <select required aria-label={`Correct match for ${leftOption.id}`} value={selectedRight} onChange={(e) => updateMatchingAnswer(leftOption.id, e.target.value)} className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-slate-100">
-                        <option value="">Pair with</option>
-                        {rightOptions.map((option) => <option key={option.id} value={option.id} disabled={otherSelections.includes(option.id)}>{option.id.toUpperCase()}</option>)}
-                      </select>
                     </label>
                   </div>
                 );
@@ -1545,7 +1549,9 @@ function QuestionManagerTab({ notify }) {
             </fieldset>
           ) : (
             <fieldset>
-              <legend className="mb-2 text-xs font-semibold uppercase text-slate-300">Select correct answer(s)</legend>
+              <legend className="mb-2 text-xs font-semibold uppercase text-slate-300">
+                {questionType === 'multiple_choice' ? 'Select all correct answers' : 'Select the correct answer'}
+              </legend>
               <div className="space-y-2">
                 {options.map((option, index) => (
                   <div key={option.id} className="flex items-center gap-3">
@@ -1609,28 +1615,59 @@ function QuestionManagerTab({ notify }) {
             Question prompt
             <textarea required rows={3} value={questionEdit.question_text || ''} onChange={(e) => setQuestionEdit({ ...questionEdit, question_text: e.target.value })} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" />
           </label>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <label className="block text-xs font-semibold uppercase text-slate-300">
+              Target Exam
+              <select
+                required
+                value={editDomainExam?.id || ''}
+                onChange={(e) => {
+                  const exam = exams.find((item) => item.id === e.target.value);
+                  setQuestionEdit({ ...questionEdit, domain_id: exam?.domains?.[0]?.id || '' });
+                }}
+                className="select-custom mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+              >
+                <option value="">Select an exam</option>
+                {exams.map((exam) => (
+                  <option key={exam.id} value={exam.id}>{exam.code} - {exam.title}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block text-xs font-semibold uppercase text-slate-300">
+              Exam Domain
+              <select
+                required
+                value={questionEdit.domain_id || ''}
+                onChange={(e) => setQuestionEdit({ ...questionEdit, domain_id: e.target.value })}
+                className="select-custom mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+              >
+                <option value="">
+                  {editDomains.length === 0 ? 'No domains found for this exam' : 'Select a domain'}
+                </option>
+                {editDomains.map((domain) => (
+                  <option key={domain.id} value={domain.id}>
+                    {domain.name} ({domain.weight_percentage}%)
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <label className="block text-xs font-semibold uppercase text-slate-300">
               Question type
-              <select value={questionEdit.type || 'single_choice'} onChange={(e) => handleEditedQuestionTypeChange(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100">
+              <select value={questionEdit.type || 'single_choice'} onChange={(e) => handleEditedQuestionTypeChange(e.target.value)} className="select-custom mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100">
                 <option value="single_choice">Single choice</option><option value="multiple_choice">Multiple choice</option><option value="drag_and_drop">Drag and drop</option>
               </select>
             </label>
             <label className="block text-xs font-semibold uppercase text-slate-300">
-              Domain
-              <select value={questionEdit.domain_id || ''} onChange={(e) => setQuestionEdit({ ...questionEdit, domain_id: e.target.value })} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100">
-                {exams.flatMap((exam) => exam.domains || []).map((domain) => <option key={domain.id} value={domain.id}>{domain.name}</option>)}
+              Number of answer options
+              <select value={questionEdit.options?.length || 0} onChange={(e) => handleEditedOptionCountChange(Number(e.target.value))} className="select-custom mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100">
+                {Array.from({ length: Math.max(14, questionEdit.options?.length || 0) - 1 }, (_, index) => index + 2)
+                  .filter((count) => questionEdit.type !== 'drag_and_drop' || count % 2 === 0)
+                  .map((count) => <option key={count} value={count}>{count} answers{questionEdit.type === 'drag_and_drop' ? ` (${count / 2} pairs)` : ''}</option>)}
               </select>
             </label>
           </div>
-          <label className="block text-xs font-semibold uppercase text-slate-300">
-            Number of answer options
-            <select value={questionEdit.options?.length || 0} onChange={(e) => handleEditedOptionCountChange(Number(e.target.value))} className="mt-1 w-full max-w-xs rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100">
-              {Array.from({ length: Math.max(14, questionEdit.options?.length || 0) - 1 }, (_, index) => index + 2)
-                .filter((count) => questionEdit.type !== 'drag_and_drop' || count % 2 === 0)
-                .map((count) => <option key={count} value={count}>{count} answers{questionEdit.type === 'drag_and_drop' ? ` (${count / 2} pairs)` : ''}</option>)}
-            </select>
-          </label>
           {questionEdit.type === 'drag_and_drop' ? (
             <fieldset className="space-y-3">
               <legend className="mb-2 text-xs font-semibold uppercase text-slate-300">Enter the matching pairs</legend>
@@ -1639,18 +1676,18 @@ function QuestionManagerTab({ notify }) {
                 const selectedRight = (questionEdit.correct_answers || []).find((pair) => pair[0] === leftOption.id)?.[1] || '';
                 const otherSelections = (questionEdit.correct_answers || []).filter((pair) => pair[0] !== leftOption.id).map((pair) => pair[1]);
                 return (
-                  <div key={leftOption.id} className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <div key={leftOption.id} className="grid grid-cols-1 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
                     <label className="flex items-center gap-2 text-xs text-slate-400">
                       <span className="w-6 font-bold uppercase">{leftOption.id}</span>
                       <input required value={leftOption.text} onChange={(e) => setQuestionEdit({ ...questionEdit, options: questionEdit.options.map((item, itemIndex) => itemIndex === index ? { ...item, text: e.target.value } : item) })} className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" />
                     </label>
+                    <select required aria-label={`Correct match for ${leftOption.id}`} value={selectedRight} onChange={(e) => updateEditedMatchingAnswer(leftOption.id, e.target.value)} className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-slate-100">
+                      <option value="">Pair with</option>
+                      {rightOptions.map((option) => <option key={option.id} value={option.id} disabled={otherSelections.includes(option.id)}>{option.id.toUpperCase()}</option>)}
+                    </select>
                     <label className="flex items-center gap-2 text-xs text-slate-400">
                       <span className="w-6 font-bold uppercase">{rightOptions[index].id}</span>
                       <input required value={rightOptions[index].text} onChange={(e) => setQuestionEdit({ ...questionEdit, options: questionEdit.options.map((item, itemIndex) => itemIndex === index + rightOptions.length ? { ...item, text: e.target.value } : item) })} className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" />
-                      <select required aria-label={`Correct match for ${leftOption.id}`} value={selectedRight} onChange={(e) => updateEditedMatchingAnswer(leftOption.id, e.target.value)} className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-slate-100">
-                        <option value="">Pair with</option>
-                        {rightOptions.map((option) => <option key={option.id} value={option.id} disabled={otherSelections.includes(option.id)}>{option.id.toUpperCase()}</option>)}
-                      </select>
                     </label>
                   </div>
                 );
@@ -1658,7 +1695,9 @@ function QuestionManagerTab({ notify }) {
             </fieldset>
           ) : (
             <fieldset>
-              <legend className="mb-2 text-xs font-semibold uppercase text-slate-300">Select correct answer(s)</legend>
+              <legend className="mb-2 text-xs font-semibold uppercase text-slate-300">
+                {questionEdit.type === 'multiple_choice' ? 'Select all correct answers' : 'Select the correct answer'}
+              </legend>
               <div className="space-y-2">
                 {(questionEdit.options || []).map((option, index) => (
                   <div key={`${option.id}-${index}`} className="flex items-center gap-3">
@@ -1676,7 +1715,7 @@ function QuestionManagerTab({ notify }) {
           )}
           <label className="block text-xs font-semibold uppercase text-slate-300">
             Explanation
-            <input value={questionEdit.explanation || ''} onChange={(e) => setQuestionEdit({ ...questionEdit, explanation: e.target.value })} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" />
+            <textarea rows={5} value={questionEdit.explanation || ''} onChange={(e) => setQuestionEdit({ ...questionEdit, explanation: e.target.value })} className="mt-1 w-full resize-y rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" />
           </label>
           <div className="flex justify-end gap-2">
             <button type="button" onClick={() => setQuestionModal(null)} className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300">Cancel</button>
