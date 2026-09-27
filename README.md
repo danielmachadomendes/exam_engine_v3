@@ -5,11 +5,12 @@ Exam Engine is a full-stack examination and certification simulation platform. I
 - User registration, approval, authentication, and profile history
 - Timed, domain-weighted exam simulations
 - Automatic answer evaluation and result breakdowns
+- Single-choice, multiple-choice, and drag-and-drop matching questions
 - Administrative management of users, exams, domains, and questions
 - Relationship-aware administration tables for exams, domains, and questions
 - Individual question creation and bulk JSON question import
 - Reusable modal forms for administration create/edit workflows
-- Configurable question answer-option counts and single-/multiple-choice validation
+- Configurable answer-option counts and validation for all question types
 - Server-side search and pagination for administrator user and question listings
 
 ## Technology stack
@@ -81,15 +82,21 @@ exams
 | `users` | Registered users, roles, approval status, and authentication data |
 | `exams` | Exam configuration, duration, question quota, passing score, and active status |
 | `domains` | Weighted syllabus areas belonging to an exam |
-| `questions` | Multiple-choice questions belonging to a domain |
+| `questions` | Choice and matching questions belonging to a domain |
 | `exam_attempts` | User exam sessions, submitted answers, scores, and domain results |
 
 Domains use `weight_percentage` to distribute questions during an exam. Questions store their options and correct answers as JSONB.
-Questions support `single_choice`, `multiple_choice`, and `drag_and_drop` types. Questions have between two and eight answer options. Single-choice questions must identify exactly one correct option. Drag-and-drop questions use an even number of options split into prompt and match columns; `correct_answers` stores one pair per prompt, for example `[["a", "e"], ["b", "f"], ["c", "g"], ["d", "h"]]`.
+Questions support `single_choice`, `multiple_choice`, and `drag_and_drop` types. Questions have between two and eight answer options. Single-choice questions must identify exactly one correct option. Drag-and-drop questions use an even number of options split into prompt and match columns, so they contain 1–4 pairs. `correct_answers` stores each pair as `[prompt_id, match_id]`, for example `[["a", "e"], ["b", "f"], ["c", "g"], ["d", "h"]]`. Every prompt and every match must appear exactly once.
 
-For an existing database, apply `backend/migrations/20260927_add_drag_and_drop_question_type.sql` before deploying the application. New installations include the type in `backend/database.sql`.
+For an existing database, apply `backend/migrations/20260927_add_drag_and_drop_question_type.sql` before deploying the application. For example, with `psql` and `DATABASE_URL` set:
 
-The admin user and question listing endpoints accept `search`, `page`, and `page_size` query parameters. `page` defaults to `1`, `page_size` defaults to `25` and is capped at `100`. Responses include a `pagination` object with `page`, `page_size`, `total`, and `total_pages`.
+```powershell
+psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\20260927_add_drag_and_drop_question_type.sql
+```
+
+New installations include the type in `backend/database.sql`.
+
+The admin user and question listing endpoints accept `search`, `page`, and `page_size` query parameters (in addition to their existing filters). `page` defaults to `1`, `page_size` defaults to `25` and is capped at `100`. Responses include a `pagination` object with `page`, `page_size`, `total`, and `total_pages`.
 
 Foreign keys use cascade deletion for content relationships:
 
@@ -169,7 +176,7 @@ cd backend
 node init-db.js
 ```
 
-`init-db.js` creates the schema. It does not create a default administrator.
+`init-db.js` creates the schema. It does not create a default administrator. On an existing database, do not rerun this schema initializer; apply the required SQL migration instead.
 
 To create an administrator intentionally, set `ADMIN_EMAIL` and a unique `ADMIN_PASSWORD` of at least 16 characters (and no more than 72 UTF-8 bytes) in the temporary backend process environment, then run `npm run create-admin`. Do not put these values in source control or pass the password as a command-line argument. The script hashes the password, refuses to overwrite an existing account, and does not print the password. Remove these temporary variables after provisioning.
 
@@ -270,7 +277,7 @@ All administrator endpoints require an approved JWT whose role is `admin`.
 
 | Method | Endpoint | Description |
 | --- | --- | --- |
-| `GET` | `/admin/users` | List users; supports `status` and `role` query filters |
+| `GET` | `/admin/users` | List users; supports `status`, `role`, `search`, `page`, and `page_size` |
 | `GET` | `/admin/users/pending` | List users awaiting approval |
 | `PATCH` | `/admin/users/:id` | Edit name, email, role, or status |
 | `PATCH` | `/admin/users/:id/status` | Approve or reject a user |
@@ -294,7 +301,7 @@ All administrator endpoints require an approved JWT whose role is `admin`.
 | Method | Endpoint | Description |
 | --- | --- | --- |
 | `POST` | `/admin/questions` | Create one question |
-| `GET` | `/admin/questions` | List questions with exam/domain relationships |
+| `GET` | `/admin/questions` | List questions with exam/domain relationships; supports `search`, `page`, and `page_size` |
 | `PATCH` | `/admin/questions/:id` | Edit question content or move it to another domain |
 | `DELETE` | `/admin/questions/:id` | Permanently delete a question |
 | `POST` | `/admin/questions/bulk` | Import an array of questions in one transaction |
@@ -321,27 +328,48 @@ Supported question types:
 
 - `single_choice`
 - `multiple_choice`
+- `drag_and_drop`
+
+For `drag_and_drop`, `options` contains an even number (2–8) of items. The first half are prompts and the second half are match targets. Each prompt and target must have a unique ID, and `correct_answers` must contain exactly one unique pairing for each prompt. For example:
+
+```json
+{
+  "domain_id": "domain-uuid",
+  "question_text": "Match each letter to its position in the alphabet.",
+  "type": "drag_and_drop",
+  "options": [
+    { "id": "a", "text": "A" },
+    { "id": "b", "text": "B" },
+    { "id": "c", "text": "1st" },
+    { "id": "d", "text": "2nd" }
+  ],
+  "correct_answers": [["a", "c"], ["b", "d"]]
+}
+```
 
 ## Administration workflows
 
 ### User management
 
-The administrator dashboard provides a searchable user table. Administrators can edit identity, role, and account status, approve or reject pending registrations, or permanently delete users.
+The administrator dashboard provides server-searched and paginated user and question tables. Reusable modal forms are used for user, exam, domain, and question editing, as well as exam, domain, and question creation. Administrators can edit identity, role, and account status, approve or reject pending registrations, or permanently delete users.
 
 Password hashes are never returned to the frontend. Password changes are not part of the general edit form.
 
 ### Exams and domains
 
-The Exams & Domains tab uses a relationship table. Each domain appears beneath its parent exam and exposes its weight. Exam configuration and domain values can be edited inline.
+The Exams & Domains tabs use relationship tables. Each domain appears beneath its parent exam and exposes its weight. Exam configuration and domain values are edited in reusable modal forms.
 
 Domain weights cannot exceed 100% in total for an exam.
 
 ### Question management
 
-The Question Manager keeps both creation modes:
+The Question Manager provides:
 
-1. Form Input for one question
-2. Bulk JSON Upload for importing a question array
+- A question form with configurable answer counts (2–8 for choice questions; an even 2–8 for matching questions)
+- Drag-and-drop matching key entry, with every prompt assigned a distinct match
+- Exam takers can drag a match onto a prompt or select it from an accessible control; grading requires the complete correct set of pairs
+- Bulk JSON upload for importing a question array
+- Modal editing for question text, type, domain, options, and correct answers
 
 The question table exposes the parent exam and domain, making relationship navigation visible while editing.
 
@@ -398,8 +426,6 @@ The health endpoint verifies that the Express server can reach PostgreSQL.
 ## Future improvements
 
 - Add a dedicated public active-exams endpoint for non-admin dashboards.
-- Replace inline administration forms with reusable modal/drawer components.
-- Add pagination and server-side search for large user and question datasets.
 - Add automated API and end-to-end tests.
 - Add password reset and administrator password-change flows.
 - Consider archive/deactivation workflows where historical attempts must never be deleted.
