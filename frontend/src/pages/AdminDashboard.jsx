@@ -130,7 +130,7 @@ export default function AdminDashboard() {
   );
 }
 
-function CsvTools({ entity, notify, onImported }) {
+function CsvTools({ entity, notify, onImported, hint = 'Keep IDs to update; blank IDs add rows. Missing rows are not deleted.' }) {
   const fileInput = useRef(null);
   const [busy, setBusy] = useState(false);
 
@@ -203,7 +203,7 @@ function CsvTools({ entity, notify, onImported }) {
       >
         <Download className="h-4 w-4" /> Export CSV
       </button>
-      <span className="text-xs text-slate-500">Keep IDs to update; blank IDs add rows. Missing rows are not deleted.</span>
+      <span className="text-xs text-slate-500">{hint}</span>
     </div>
   );
 }
@@ -215,6 +215,14 @@ function UserApprovalsTab({ notify }) {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editingUser, setEditingUser] = useState(null);
+  const [createUserOpen, setCreateUserOpen] = useState(false);
+  const [createUserForm, setCreateUserForm] = useState({
+    full_name: '',
+    email: '',
+    password: '',
+    role: 'user',
+    status: 'pending',
+  });
   const [editForm, setEditForm] = useState({});
   const [search, setSearch] = useState('');
   const [appliedSearch, setAppliedSearch] = useState('');
@@ -282,6 +290,19 @@ function UserApprovalsTab({ notify }) {
     }
   };
 
+  const createUser = async (event) => {
+    event.preventDefault();
+    try {
+      await adminApi.createUser(createUserForm);
+      setCreateUserOpen(false);
+      setCreateUserForm({ full_name: '', email: '', password: '', role: 'user', status: 'pending' });
+      setUsersReload((value) => value + 1);
+      notify('success', 'User created successfully');
+    } catch (err) {
+      notify('error', err.message || 'Failed to create user');
+    }
+  };
+
   const deleteUser = async (user) => {
     if (!window.confirm(`Delete ${user.full_name}? This action cannot be undone.`)) return;
     try {
@@ -301,14 +322,31 @@ function UserApprovalsTab({ notify }) {
         <p className="text-sm text-slate-400">Review, edit, approve, and remove registered accounts.</p>
       </div>
 
-      <div className="relative max-w-xs mb-6">
-        <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search users"
-          className="w-full pl-9 pr-3 py-2 bg-slate-900 border border-slate-800 rounded-lg text-sm text-slate-100"
-        />
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative w-full max-w-xs">
+            <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search users"
+              className="w-full pl-9 pr-3 py-2 bg-slate-900 border border-slate-800 rounded-lg text-sm text-slate-100"
+            />
+          </div>
+          <CsvTools
+            entity="users"
+            notify={notify}
+            onImported={() => setUsersReload((value) => value + 1)}
+            hint="New users need a password; exports leave password blank. Keep IDs to update; blank IDs add rows."
+          />
+        </div>
+        <button
+          type="button"
+          onClick={() => setCreateUserOpen(true)}
+          className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white"
+        >
+          <Plus className="h-4 w-4" /> Add user
+        </button>
       </div>
 
       {loading ? (
@@ -412,6 +450,40 @@ function UserApprovalsTab({ notify }) {
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" onClick={() => setEditingUser(null)} className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300">Cancel</button>
             <button type="submit" className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white"><Save className="mr-1 inline h-4 w-4" />Save user</button>
+          </div>
+        </form>
+      </AdminModal>
+      <AdminModal open={createUserOpen} title="Create user" onClose={() => setCreateUserOpen(false)}>
+        <form onSubmit={createUser} className="space-y-4">
+          <label className="block text-xs font-semibold uppercase text-slate-300">
+            Full name
+            <input required maxLength={150} value={createUserForm.full_name} onChange={(e) => setCreateUserForm({ ...createUserForm, full_name: e.target.value })} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" />
+          </label>
+          <label className="block text-xs font-semibold uppercase text-slate-300">
+            Email
+            <input type="email" required maxLength={255} value={createUserForm.email} onChange={(e) => setCreateUserForm({ ...createUserForm, email: e.target.value })} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" />
+          </label>
+          <label className="block text-xs font-semibold uppercase text-slate-300">
+            Initial password
+            <input type="password" required autoComplete="new-password" value={createUserForm.password} onChange={(e) => setCreateUserForm({ ...createUserForm, password: e.target.value })} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" />
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block text-xs font-semibold uppercase text-slate-300">
+              Role
+              <select value={createUserForm.role} onChange={(e) => setCreateUserForm({ ...createUserForm, role: e.target.value })} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100">
+                <option value="user">user</option><option value="admin">admin</option>
+              </select>
+            </label>
+            <label className="block text-xs font-semibold uppercase text-slate-300">
+              Status
+              <select value={createUserForm.status} onChange={(e) => setCreateUserForm({ ...createUserForm, status: e.target.value })} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100">
+                <option value="pending">pending</option><option value="approved">approved</option><option value="rejected">rejected</option>
+              </select>
+            </label>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={() => setCreateUserOpen(false)} className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300">Cancel</button>
+            <button type="submit" className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white"><Plus className="mr-1 inline h-4 w-4" />Create user</button>
           </div>
         </form>
       </AdminModal>
@@ -1051,7 +1123,7 @@ function QuestionManagerTab({ notify }) {
     setQuestionType(type);
     if (type === 'drag_and_drop') {
       setOptions((current) => {
-        const evenLength = current.length % 2 === 0 ? current.length : Math.min(current.length + 1, 8);
+        const evenLength = current.length % 2 === 0 ? current.length : Math.min(current.length + 1, 14);
         return Array.from({ length: evenLength }, (_, index) =>
           current[index] || { id: String.fromCharCode(97 + index), text: '' }
         );
@@ -1100,7 +1172,7 @@ function QuestionManagerTab({ notify }) {
   const handleEditedQuestionTypeChange = (type) => {
     const currentOptions = questionEdit.options || [];
     if (type === 'drag_and_drop') {
-      const evenLength = currentOptions.length % 2 === 0 ? currentOptions.length : Math.min(currentOptions.length + 1, 8);
+      const evenLength = currentOptions.length % 2 === 0 ? currentOptions.length : Math.min(currentOptions.length + 1, 14);
       const options = Array.from({ length: evenLength }, (_, index) =>
         currentOptions[index] || { id: String.fromCharCode(97 + index), text: '' }
       );
@@ -1400,14 +1472,10 @@ function QuestionManagerTab({ notify }) {
             <label className="block text-xs font-semibold uppercase text-slate-300">
               Number of answer options
               <select value={options.length} onChange={(e) => handleOptionCountChange(Number(e.target.value))} className="select-custom mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100">
-                {Array.from({ length: 7 }, (_, index) => index + 2)
+                {Array.from({ length: 13 }, (_, index) => index + 2)
                   .filter((count) => questionType !== 'drag_and_drop' || count % 2 === 0)
                   .map((count) => <option key={count} value={count}>{count} answers{questionType === 'drag_and_drop' ? ` (${count / 2} pairs)` : ''}</option>)}
               </select>
-            </label>
-            <label className="block text-xs font-semibold uppercase text-slate-300">
-              Explanation
-              <input value={explanation} onChange={(e) => setExplanation(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" />
             </label>
           </div>
           {questionType === 'drag_and_drop' ? (
@@ -1450,6 +1518,10 @@ function QuestionManagerTab({ notify }) {
               </div>
             </fieldset>
           )}
+          <label className="block text-xs font-semibold uppercase text-slate-300">
+            Explanation
+            <textarea rows={5} value={explanation} onChange={(e) => setExplanation(e.target.value)} className="mt-1 w-full resize-y rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" />
+          </label>
           <div className="flex justify-end gap-2">
             <button type="button" onClick={() => setQuestionModal(null)} className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300">Cancel</button>
             <button type="submit" className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">Save question</button>
@@ -1514,7 +1586,7 @@ function QuestionManagerTab({ notify }) {
           <label className="block text-xs font-semibold uppercase text-slate-300">
             Number of answer options
             <select value={questionEdit.options?.length || 0} onChange={(e) => handleEditedOptionCountChange(Number(e.target.value))} className="mt-1 w-full max-w-xs rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100">
-              {Array.from({ length: Math.max(8, questionEdit.options?.length || 0) - 1 }, (_, index) => index + 2)
+              {Array.from({ length: Math.max(14, questionEdit.options?.length || 0) - 1 }, (_, index) => index + 2)
                 .filter((count) => questionEdit.type !== 'drag_and_drop' || count % 2 === 0)
                 .map((count) => <option key={count} value={count}>{count} answers{questionEdit.type === 'drag_and_drop' ? ` (${count / 2} pairs)` : ''}</option>)}
             </select>

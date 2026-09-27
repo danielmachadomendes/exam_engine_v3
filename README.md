@@ -86,7 +86,7 @@ exams
 | `exam_attempts` | User exam sessions, submitted answers, scores, and domain results |
 
 Domains use `weight_percentage` to distribute questions during an exam. Questions store their options and correct answers as JSONB.
-Questions support `single_choice`, `multiple_choice`, and `drag_and_drop` types. Questions have between two and eight answer options. Single-choice questions must identify exactly one correct option. Drag-and-drop questions use an even number of options split into prompt and match columns, so they contain 1–4 pairs. `correct_answers` stores each pair as `[prompt_id, match_id]`, for example `[["a", "e"], ["b", "f"], ["c", "g"], ["d", "h"]]`. Every prompt and every match must appear exactly once.
+Questions support `single_choice`, `multiple_choice`, and `drag_and_drop` types. Questions have between two and fourteen answer options. Single-choice questions must identify exactly one correct option. Drag-and-drop questions use an even number of options split into prompt and match columns, so they contain 1–7 pairs. `correct_answers` stores each pair as `[prompt_id, match_id]`, for example `[["a", "h"], ["b", "i"], ["c", "j"], ["d", "k"], ["e", "l"], ["f", "m"], ["g", "n"]]`. Every prompt and every match must appear exactly once.
 
 For an existing database, apply `backend/migrations/20260927_add_drag_and_drop_question_type.sql` before deploying the application. For example, with `psql` and `DATABASE_URL` set:
 
@@ -279,9 +279,12 @@ All administrator endpoints require an approved JWT whose role is `admin`.
 | --- | --- | --- |
 | `GET` | `/admin/users` | List users; supports `status`, `role`, `search`, `page`, and `page_size` |
 | `GET` | `/admin/users/pending` | List users awaiting approval |
+| `POST` | `/admin/users` | Create a user with an initial password |
 | `PATCH` | `/admin/users/:id` | Edit name, email, role, or status |
 | `PATCH` | `/admin/users/:id/status` | Approve or reject a user |
 | `DELETE` | `/admin/users/:id` | Permanently delete a user |
+| `GET` | `/admin/users/export` | Export users as CSV without password hashes |
+| `POST` | `/admin/users/import` | Create or update users from CSV |
 
 ### Administrator exams and domains
 
@@ -312,11 +315,12 @@ All administrator endpoints require an approved JWT whose role is `admin`.
 | `GET` | `/admin/questions/export` | Export all questions as CSV |
 | `POST` | `/admin/questions/import` | Create or update questions from CSV |
 
-The admin dashboard can export and import CSV files in each Exams, Domains, and Questions tab. Exported files can be edited in a spreadsheet and uploaded again. Keep the `id` column to update a record; leave it blank to insert a new one. Omitted rows are not deleted. Each CSV import is atomic, reports validation errors by row, and accepts up to 5,000 rows and 10 MB.
+The admin dashboard can export and import CSV files in the Users, Exams, Domains, and Questions tabs. Exported files can be edited in a spreadsheet and uploaded again. Keep the `id` column to update a record; leave it blank to insert a new one. Omitted rows are not deleted. Each CSV import is atomic, reports validation errors by row, and accepts up to 5,000 rows and 10 MB. User CSV files include a `password` column that is blank on export; supply a password for each new user, and leave it blank to retain an existing user's password.
 
 Import in dependency order: exams, then domains, then questions.
 
 - Exams columns: `id,code,title,description,duration_minutes,total_questions,passing_score_percentage,is_active`. Exam codes must remain unique.
+- Users columns: `id,full_name,email,role,status,password`. New users require a password; existing users keep their password when that cell is blank.
 - Domains columns: `id,exam_code,name,weight_percentage`. The parent exam is matched by `exam_code`; total domain weight per exam cannot exceed 100%.
 - Questions columns: `id,domain_id,exam_code,domain_name,question_text,type,options,correct_answers,explanation,is_active`. `options` and `correct_answers` are JSON arrays. Keep the exported `domain_id`, or leave it blank and match with both `exam_code` and `domain_name`. Supply `domain_id` if the name is ambiguous within an exam.
 

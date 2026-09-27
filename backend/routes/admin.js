@@ -1,5 +1,6 @@
 ﻿const express = require('express');
 const router = express.Router();
+const bcrypt = require('bcrypt');
 const pool = require('../db');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const { parseCsv, serializeCsv, requireHeaders } = require('../utils/csv');
@@ -9,6 +10,7 @@ router.use(authenticateToken, requireAdmin);
 const VALID_USER_ROLES = new Set(['user', 'admin']);
 const VALID_ACCOUNT_STATUSES = new Set(['pending', 'approved', 'rejected']);
 const VALID_QUESTION_TYPES = new Set(['single_choice', 'multiple_choice', 'drag_and_drop']);
+const MAX_ANSWER_OPTIONS = 14;
 const UUID_RE = /^[0-9a-f-]+$/i;
 
 function normalizeText(value) {
@@ -56,13 +58,13 @@ function validateQuestionContent(type, options, correctAnswers) {
   if (
     !Array.isArray(options) ||
     options.length < 2 ||
-    options.length > 8 ||
+    options.length > MAX_ANSWER_OPTIONS ||
     (type === 'drag_and_drop' && options.length % 2 !== 0)
   ) {
     if (type === 'drag_and_drop') {
-      return 'drag_and_drop questions must have an even number of answers between two and eight';
+      return 'drag_and_drop questions must have an even number of answers between two and fourteen';
     }
-    return 'options must contain between two and eight answers';
+    return 'options must contain between two and fourteen answers';
   }
   const optionIds = options.map((option) => option && option.id);
   if (
@@ -293,6 +295,49 @@ router.get('/users/pending', async (req, res) => {
   }
 });
 
+router.post('/users', async (req, res) => {
+  const {
+    full_name,
+    email,
+    password,
+    role = 'user',
+    status = 'pending',
+  } = req.body;
+  const name = normalizeText(full_name);
+  const normalizedEmail = normalizeText(email)?.toLowerCase();
+
+  if (!name || name.length > 150) {
+    return res.status(400).json({ message: 'full_name is required and must be at most 150 characters' });
+  }
+  if (
+    !normalizedEmail ||
+    normalizedEmail.length > 255 ||
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)
+  ) {
+    return res.status(400).json({ message: 'A valid email is required' });
+  }
+  if (typeof password !== 'string' || !password || Buffer.byteLength(password, 'utf8') > 72) {
+    return res.status(400).json({ message: 'A password of at most 72 UTF-8 bytes is required' });
+  }
+  if (!VALID_USER_ROLES.has(role)) {
+    return res.status(400).json({ message: 'role must be either user or admin' });
+  }
+  if (!VALID_ACCOUNT_STATUSES.has(status)) {
+    return res.status(400).json({ message: 'status must be one of pending, approved, or rejected' });
+  }
+
+  try {
+    const passwordHash = await bcrypt.hash(password, 10);
+    const result = await pool.query(
+      'INSERT INTO users (full_name, email, password_hash, role, status) VALUES ($1, $2, $3, $4, $5) RETURNING id, full_name, email, role, status, created_at, updated_at',
+      [name, normalizedEmail, passwordHash, role, status]
+    );
+    return res.status(201).json({ message: 'User created successfully', user: result.rows[0] });
+  } catch (error) {
+    return mapDbError(res, error, 'Create user error');
+  }
+});
+
 router.patch('/users/:id', async (req, res) => {
   const { id } = req.params;
   const { full_name, email, role, status } = req.body;
@@ -405,6 +450,95 @@ router.patch('/users/:id/status', async (req, res) => {
     return mapDbError(res, error, 'Update user status error');
   }
 });
+
+router.get('/users/export', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, full_name, email, role, status FROM users ORDER BY created_at, id'
+    );
+    const headers = ['id', 'full_name', 'email', 'role', 'status', 'password'];
+    res.type('text/csv; charset=utf-8');
+    res.set('Content-Disposition', 'attachment; filename="users.csv"');
+    return res.status(200).send(serializeCsv(headers, result.rows));
+  } catch (error) {
+    return mapDbError(res, error, 'Export users error');
+  }
+});
+
+router.post('/users/import', async (req, res) => handleCsvImport(
+  req,
+  res,
+  ['id', 'full_name', 'email', 'role', 'status', 'password'],
+  'Import users failed',
+  async (client, rows) => {
+    const seenIds = new Set();
+    let created = 0;
+    let updated = 0;
+
+    for (const row of rows) {
+      const {
+        id = '',
+        full_name: fullName = '',
+        email = '',
+        role = '',
+        status = '',
+        password = '',
+      } = row.values;
+      const recordId = id.trim().toLowerCase();
+      const name = normalizeText(fullName);
+      const normalizedEmail = normalizeText(email)?.toLowerCase();
+      const cleanRole = role.trim().toLowerCase();
+      const cleanStatus = status.trim().toLowerCase();
+      const cleanPassword = password;
+
+      if (recordId && !isUuid(recordId)) csvRowError(row, 'id must be a valid UUID or blank');
+      if (recordId && seenIds.has(recordId)) csvRowError(row, 'id appears more than once in this file');
+      if (recordId) seenIds.add(recordId);
+      if (!name || name.length > 150) csvRowError(row, 'full_name is required and must be at most 150 characters');
+      if (
+        !normalizedEmail ||
+        normalizedEmail.length > 255 ||
+        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)
+      ) {
+        csvRowError(row, 'email must be a valid email address of at most 255 characters');
+      }
+      if (!VALID_USER_ROLES.has(cleanRole)) csvRowError(row, 'role must be either user or admin');
+      if (!VALID_ACCOUNT_STATUSES.has(cleanStatus)) {
+        csvRowError(row, 'status must be pending, approved, or rejected');
+      }
+      if ((!recordId || cleanPassword) && (!cleanPassword || Buffer.byteLength(cleanPassword, 'utf8') > 72)) {
+        csvRowError(row, 'a password of at most 72 UTF-8 bytes is required for new users and password changes');
+      }
+
+      const values = [name, normalizedEmail, cleanRole, cleanStatus];
+      if (recordId) {
+        let query;
+        if (cleanPassword) {
+          const passwordHash = await bcrypt.hash(cleanPassword, 10);
+          query = await client.query(
+            'UPDATE users SET full_name = $1, email = $2, role = $3, status = $4, password_hash = $5, updated_at = CURRENT_TIMESTAMP WHERE id = $6 RETURNING id',
+            [...values, passwordHash, recordId]
+          );
+        } else {
+          query = await client.query(
+            'UPDATE users SET full_name = $1, email = $2, role = $3, status = $4, updated_at = CURRENT_TIMESTAMP WHERE id = $5 RETURNING id',
+            [...values, recordId]
+          );
+        }
+        if (!query.rows.length) csvRowError(row, 'user id was not found', 404);
+        updated += 1;
+      } else {
+        const passwordHash = await bcrypt.hash(cleanPassword, 10);
+        await client.query(
+          'INSERT INTO users (full_name, email, password_hash, role, status) VALUES ($1, $2, $3, $4, $5)',
+          [name, normalizedEmail, passwordHash, cleanRole, cleanStatus]
+        );
+        created += 1;
+      }
+    }
+    return { created, updated };
+  }
+));
 
 router.post('/exams', async (req, res) => {
   const {

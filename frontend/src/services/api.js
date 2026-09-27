@@ -62,6 +62,7 @@ export const adminApi = {
     return apiFetch(`/admin/users${query ? `?${query}` : ''}`);
   },
   getPendingUsers: () => apiFetch('/admin/users/pending'),
+  createUser: (data) => apiFetch('/admin/users', { method: 'POST', body: JSON.stringify(data) }),
   updateUser: (id, data) =>
     apiFetch(`/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   updateUserStatus: (id, status) =>
