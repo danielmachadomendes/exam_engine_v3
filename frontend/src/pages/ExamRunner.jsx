@@ -159,6 +159,18 @@ export default function ExamRunner() {
     persistAnswers(updatedMap);
   };
 
+  const handleMatchingChange = (leftId, rightId) => {
+    if (!currentQ) return;
+    const currentPairs = userAnswers[currentQ.id] || [];
+    const matchingPairs = currentPairs.filter(
+      (pair) => Array.isArray(pair) && pair[0] !== leftId && pair[1] !== rightId
+    );
+    persistAnswers({
+      ...userAnswers,
+      [currentQ.id]: [...matchingPairs, [leftId, rightId]],
+    });
+  };
+
   // Alternar Flag para Revisão
   const handleToggleFlag = () => {
     if (!currentQ) return;
@@ -256,7 +268,13 @@ export default function ExamRunner() {
   }
 
   const answeredCount = Object.keys(userAnswers).filter(
-    (k) => userAnswers[k] && userAnswers[k].length > 0
+    (k) => {
+      const question = questions.find((item) => item.id === k);
+      if (!question || !userAnswers[k]?.length) return false;
+      return question.type === 'drag_and_drop'
+        ? userAnswers[k].length === question.options.length / 2
+        : true;
+    }
   ).length;
 
   return (
@@ -307,7 +325,9 @@ export default function ExamRunner() {
                   <p className="text-xs text-slate-400 mt-0.5">
                     {currentQ.type === 'multiple_choice'
                       ? 'Select all applicable options (Multiple Choice)'
-                      : 'Select one option (Single Choice)'}
+                      : currentQ.type === 'drag_and_drop'
+                        ? 'Drag each answer to its matching prompt, or use the selectors.'
+                        : 'Select one option (Single Choice)'}
                   </p>
                 </div>
 
@@ -334,6 +354,112 @@ export default function ExamRunner() {
               </h2>
 
               {/* Opções */}
+              {currentQ.type === 'drag_and_drop' ? (
+                <div className="grid gap-6 md:grid-cols-2">
+                  {(() => {
+                    const midpoint = currentQ.options.length / 2;
+                    const prompts = currentQ.options.slice(0, midpoint);
+                    const matches = currentQ.options.slice(midpoint).reverse();
+                    const selections = userAnswers[currentQ.id] || [];
+                    const usedMatchIds = selections
+                      .filter((pair) => Array.isArray(pair))
+                      .map((pair) => pair[1]);
+                    return (
+                      <>
+                        <div className="space-y-3">
+                          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">Prompts</h3>
+                          {prompts.map((prompt) => {
+                            const selectedId = selections.find(
+                              (pair) => Array.isArray(pair) && pair[0] === prompt.id
+                            )?.[1] || '';
+                            const selectedOption = currentQ.options.find((option) => option.id === selectedId);
+                            return (
+                              <div
+                                key={prompt.id}
+                                onDragOver={(event) => event.preventDefault()}
+                                onDrop={(event) => {
+                                  event.preventDefault();
+                                  const rightId = event.dataTransfer.getData('text/plain');
+                                  if (matches.some((option) => option.id === rightId)) {
+                                    handleMatchingChange(prompt.id, rightId);
+                                  }
+                                }}
+                                className="min-h-24 rounded-xl border border-dashed border-slate-700 bg-slate-950/60 p-4"
+                              >
+                                <div className="mb-3 flex items-start gap-3">
+                                  <span className="font-mono text-xs font-bold uppercase text-indigo-300">{prompt.id}.</span>
+                                  <span className="text-sm text-slate-200">{prompt.text}</span>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                  <span className="text-xs text-slate-500">Match:</span>
+                                  <select
+                                    aria-label={`Match for ${prompt.text}`}
+                                    value={selectedId}
+                                    onChange={(event) => {
+                                      if (event.target.value) handleMatchingChange(prompt.id, event.target.value);
+                                    }}
+                                    className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+                                  >
+                                    <option value="">Choose a match</option>
+                                    {matches.map((option) => (
+                                      <option
+                                        key={option.id}
+                                        value={option.id}
+                                        disabled={option.id !== selectedId && usedMatchIds.includes(option.id)}
+                                      >
+                                        {option.id.toUpperCase()}. {option.text}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  {selectedOption && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        persistAnswers({
+                                          ...userAnswers,
+                                          [currentQ.id]: selections.filter((pair) => pair[0] !== prompt.id),
+                                        });
+                                      }}
+                                      aria-label={`Clear match for ${prompt.text}`}
+                                      className="text-xs text-slate-500 hover:text-white"
+                                    >
+                                      Clear
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <div className="space-y-3">
+                          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">Drag these answers to a prompt</h3>
+                          {matches.map((option) => {
+                            const isUsed = usedMatchIds.includes(option.id);
+                            return (
+                              <div
+                                key={option.id}
+                                draggable={!isUsed}
+                                onDragStart={(event) => {
+                                  event.dataTransfer.setData('text/plain', option.id);
+                                  event.dataTransfer.effectAllowed = 'move';
+                                }}
+                                className={`flex items-center gap-3 rounded-xl border p-4 text-sm ${
+                                  isUsed
+                                    ? 'border-emerald-500/40 bg-emerald-950/20 text-emerald-200'
+                                    : 'cursor-grab border-slate-800 bg-slate-950/60 text-slate-300 active:cursor-grabbing'
+                                }`}
+                              >
+                                <span className="font-mono text-xs font-bold uppercase text-indigo-300">{option.id}.</span>
+                                <span>{option.text}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+              ) : (
               <div className="space-y-3">
                 {currentQ.options.map((opt) => {
                   const isChecked = (userAnswers[currentQ.id] || []).includes(opt.id);
@@ -365,6 +491,7 @@ export default function ExamRunner() {
                   );
                 })}
               </div>
+              )}
             </div>
           ) : (
             <div className="p-12 text-center text-slate-500">No question loaded.</div>

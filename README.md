@@ -8,6 +8,9 @@ Exam Engine is a full-stack examination and certification simulation platform. I
 - Administrative management of users, exams, domains, and questions
 - Relationship-aware administration tables for exams, domains, and questions
 - Individual question creation and bulk JSON question import
+- Reusable modal forms for administration create/edit workflows
+- Configurable question answer-option counts and single-/multiple-choice validation
+- Server-side search and pagination for administrator user and question listings
 
 ## Technology stack
 
@@ -39,6 +42,8 @@ exam_engine_v3/
 │   ├── server.js            # Express application entry point
 │   ├── middleware/
 │   │   └── auth.js          # JWT and administrator authorization
+│   ├── migrations/
+│   │   └── 20260927_add_drag_and_drop_question_type.sql
 │   ├── routes/
 │   │   ├── auth.js          # Registration and login
 │   │   ├── users.js         # Authenticated user profile
@@ -80,6 +85,11 @@ exams
 | `exam_attempts` | User exam sessions, submitted answers, scores, and domain results |
 
 Domains use `weight_percentage` to distribute questions during an exam. Questions store their options and correct answers as JSONB.
+Questions support `single_choice`, `multiple_choice`, and `drag_and_drop` types. Questions have between two and eight answer options. Single-choice questions must identify exactly one correct option. Drag-and-drop questions use an even number of options split into prompt and match columns; `correct_answers` stores one pair per prompt, for example `[["a", "e"], ["b", "f"], ["c", "g"], ["d", "h"]]`.
+
+For an existing database, apply `backend/migrations/20260927_add_drag_and_drop_question_type.sql` before deploying the application. New installations include the type in `backend/database.sql`.
+
+The admin user and question listing endpoints accept `search`, `page`, and `page_size` query parameters. `page` defaults to `1`, `page_size` defaults to `25` and is capped at `100`. Responses include a `pagination` object with `page`, `page_size`, `total`, and `total_pages`.
 
 Foreign keys use cascade deletion for content relationships:
 

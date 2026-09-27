@@ -1,12 +1,13 @@
 -- Habilita extensão para geração de UUID caso queira usar UUIDs
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 -- =====================================================
 -- 1. ENUMS
 -- =====================================================
 CREATE TYPE user_role AS ENUM ('user', 'admin');
 CREATE TYPE account_status AS ENUM ('pending', 'approved', 'rejected');
-CREATE TYPE question_type AS ENUM ('single_choice', 'multiple_choice');
+CREATE TYPE question_type AS ENUM ('single_choice', 'multiple_choice', 'drag_and_drop');
 CREATE TYPE attempt_status AS ENUM ('in_progress', 'completed', 'timed_out');
 
 -- =====================================================
@@ -93,7 +94,15 @@ CREATE TABLE exam_attempts (
 -- =====================================================
 CREATE INDEX idx_users_email ON users(email);
 CREATE INDEX idx_users_status ON users(status);
+CREATE INDEX idx_users_created_at_id ON users(created_at DESC, id DESC);
+CREATE INDEX idx_users_full_name_trgm ON users USING GIN (full_name gin_trgm_ops);
+CREATE INDEX idx_users_email_trgm ON users USING GIN (email gin_trgm_ops);
 CREATE INDEX idx_questions_domain_id ON questions(domain_id);
+CREATE INDEX idx_questions_created_at_id ON questions(created_at DESC, id DESC);
+CREATE INDEX idx_questions_text_trgm ON questions USING GIN (question_text gin_trgm_ops);
 CREATE INDEX idx_domains_exam_id ON domains(exam_id);
+CREATE INDEX idx_domains_name_trgm ON domains USING GIN (name gin_trgm_ops);
+CREATE INDEX idx_exams_code_trgm ON exams USING GIN (code gin_trgm_ops);
+CREATE INDEX idx_exams_title_trgm ON exams USING GIN (title gin_trgm_ops);
 CREATE INDEX idx_exam_attempts_user_id ON exam_attempts(user_id);
 CREATE INDEX idx_exam_attempts_exam_id ON exam_attempts(exam_id);

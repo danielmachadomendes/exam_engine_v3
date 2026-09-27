@@ -16,9 +16,23 @@ function shuffleArray(array) {
 }
 
 // Utility: Deep-equal check for single or multi-select answer arrays
-function areAnswersEqual(userAns, correctAns) {
+function areAnswersEqual(userAns, correctAns, questionType) {
   if (!Array.isArray(userAns) || !Array.isArray(correctAns)) return false;
   if (userAns.length !== correctAns.length) return false;
+
+  if (questionType === 'drag_and_drop') {
+    if (
+      userAns.some((pair) => !Array.isArray(pair) || pair.length !== 2) ||
+      correctAns.some((pair) => !Array.isArray(pair) || pair.length !== 2)
+    ) {
+      return false;
+    }
+    const normalizePair = (pair) =>
+      pair.map((item) => String(item).trim().toLowerCase()).join('\u0000');
+    const normalizedUser = userAns.map(normalizePair).sort();
+    const normalizedCorrect = correctAns.map(normalizePair).sort();
+    return normalizedUser.every((value, index) => value === normalizedCorrect[index]);
+  }
 
   const normalizedUser = userAns.map(item => String(item).trim().toLowerCase()).sort();
   const normalizedCorrect = correctAns.map(item => String(item).trim().toLowerCase()).sort();
@@ -236,7 +250,7 @@ router.post('/:id/submit', async (req, res) => {
 
     questionsRes.rows.forEach(q => {
       const uAnswers = user_answers[q.id] || [];
-      const isCorrect = areAnswersEqual(uAnswers, q.correct_answers);
+      const isCorrect = areAnswersEqual(uAnswers, q.correct_answers, q.type);
 
       if (isCorrect) correctCount++;
 

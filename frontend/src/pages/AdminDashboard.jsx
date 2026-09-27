@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { adminApi, apiFetch } from '../services/api';
+import AdminModal from '../components/AdminModal';
+import PaginationControls from '../components/PaginationControls';
 import {
   Users,
   Layers,
@@ -27,10 +29,10 @@ export default function AdminDashboard() {
   // Feedback global
   const [notification, setNotification] = useState(null);
 
-  const showNotification = (type, message) => {
+  const showNotification = useCallback((type, message) => {
     setNotification({ type, message });
     setTimeout(() => setNotification(null), 4000);
-  };
+  }, []);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col md:flex-row">
@@ -133,29 +135,50 @@ export default function AdminDashboard() {
 function UserApprovalsTab({ notify }) {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [editingId, setEditingId] = useState(null);
+  const [editingUser, setEditingUser] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [search, setSearch] = useState('');
-
-  const fetchUsers = async () => {
-    try {
-      const data = await adminApi.getUsers();
-      setUsers(data.users || []);
-    } catch (err) {
-      notify('error', err.message || 'Failed to load pending users');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const [appliedSearch, setAppliedSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [usersReload, setUsersReload] = useState(0);
+  const [pagination, setPagination] = useState({ page_size: 25, total: 0, total_pages: 0 });
 
   useEffect(() => {
-    fetchUsers();
-  }, []);
+    const timeout = setTimeout(() => {
+      setPage(1);
+      setAppliedSearch(search.trim());
+    }, 300);
+    return () => clearTimeout(timeout);
+  }, [search]);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    adminApi.getUsers({ page, page_size: pagination.page_size, search: appliedSearch })
+      .then((data) => {
+        if (!active) return;
+        setUsers(data.users || []);
+        setPagination(data.pagination || { page, page_size: 25, total: 0, total_pages: 0 });
+        if (data.pagination && page > Math.max(data.pagination.total_pages, 1)) {
+          setPage(Math.max(data.pagination.total_pages, 1));
+        }
+      })
+      .catch((err) => {
+        if (active) notify('error', err.message || 'Failed to load users');
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [appliedSearch, page, pagination.page_size, usersReload, notify]);
 
   const handleStatusChange = async (id, status) => {
     try {
       await adminApi.updateUserStatus(id, status);
       setUsers((prev) => prev.map((u) => (u.id === id ? { ...u, status } : u)));
+      setUsersReload((value) => value + 1);
       notify('success', `User successfully ${status}`);
     } catch (err) {
       notify('error', err.message || `Failed to ${status} user`);
@@ -163,15 +186,17 @@ function UserApprovalsTab({ notify }) {
   };
 
   const startEditing = (user) => {
-    setEditingId(user.id);
+    setEditingUser(user);
     setEditForm({ full_name: user.full_name, email: user.email, role: user.role, status: user.status });
   };
 
-  const saveUser = async (id) => {
+  const saveUser = async (event) => {
+    event.preventDefault();
     try {
-      const data = await adminApi.updateUser(id, editForm);
-      setUsers((prev) => prev.map((u) => (u.id === id ? data.user : u)));
-      setEditingId(null);
+      const data = await adminApi.updateUser(editingUser.id, editForm);
+      setUsers((prev) => prev.map((u) => (u.id === editingUser.id ? data.user : u)));
+      setUsersReload((value) => value + 1);
+      setEditingUser(null);
       notify('success', 'User updated successfully');
     } catch (err) {
       notify('error', err.message || 'Failed to update user');
@@ -183,15 +208,12 @@ function UserApprovalsTab({ notify }) {
     try {
       await apiFetch(`/admin/users/${user.id}`, { method: 'DELETE' });
       setUsers((prev) => prev.filter((item) => item.id !== user.id));
+      setUsersReload((value) => value + 1);
       notify('success', 'User deleted successfully');
     } catch (err) {
       notify('error', err.message || 'Failed to delete user');
     }
   };
-
-  const visibleUsers = users.filter((item) =>
-    `${item.full_name} ${item.email} ${item.role} ${item.status}`.toLowerCase().includes(search.toLowerCase())
-  );
 
   return (
     <div>
@@ -212,9 +234,9 @@ function UserApprovalsTab({ notify }) {
 
       {loading ? (
         <div className="flex items-center justify-center p-12 text-slate-400">
-          <Loader2 className="w-6 h-6 animate-spin mr-2" /> Loading pending users...
+          <Loader2 className="w-6 h-6 animate-spin mr-2" /> Loading users...
         </div>
-      ) : users.length === 0 ? (
+      ) : pagination.total === 0 ? (
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-10 text-center text-slate-400">
           No users found.
         </div>
@@ -232,78 +254,22 @@ function UserApprovalsTab({ notify }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/80">
-              {visibleUsers.map((u) => (
+              {users.map((u) => (
                 <tr key={u.id} className="hover:bg-slate-850/50 transition">
-                  <td className="py-4 px-6 font-medium text-white">
-                    {editingId === u.id ? (
-                      <input
-                        value={editForm.full_name}
-                        onChange={(e) => setEditForm({ ...editForm, full_name: e.target.value })}
-                        className="w-full px-2 py-1 bg-slate-950 border border-slate-700 rounded"
-                      />
-                    ) : (
-                      u.full_name
-                    )}
-                  </td>
-                  <td className="py-4 px-6 text-slate-300 font-mono text-xs">
-                    {editingId === u.id ? (
-                      <input
-                        value={editForm.email}
-                        onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
-                        className="w-full px-2 py-1 bg-slate-950 border border-slate-700 rounded"
-                      />
-                    ) : (
-                      u.email
-                    )}
-                  </td>
-                  <td className="py-4 px-6 text-slate-300 text-xs">
-                    {editingId === u.id ? (
-                      <select
-                        value={editForm.role}
-                        onChange={(e) => setEditForm({ ...editForm, role: e.target.value })}
-                        className="px-2 py-1 bg-slate-950 border border-slate-700 rounded"
-                      >
-                        <option value="user">user</option>
-                        <option value="admin">admin</option>
-                      </select>
-                    ) : (
-                      u.role
-                    )}
-                  </td>
-                  <td className="py-4 px-6 text-slate-300 text-xs">
-                    {editingId === u.id ? (
-                      <select
-                        value={editForm.status}
-                        onChange={(e) => setEditForm({ ...editForm, status: e.target.value })}
-                        className="px-2 py-1 bg-slate-950 border border-slate-700 rounded"
-                      >
-                        <option value="pending">pending</option>
-                        <option value="approved">approved</option>
-                        <option value="rejected">rejected</option>
-                      </select>
-                    ) : (
-                      u.status
-                    )}
-                  </td>
+                  <td className="py-4 px-6 font-medium text-white">{u.full_name}</td>
+                  <td className="py-4 px-6 text-slate-300 font-mono text-xs">{u.email}</td>
+                  <td className="py-4 px-6 text-slate-300 text-xs">{u.role}</td>
+                  <td className="py-4 px-6 text-slate-300 text-xs">{u.status}</td>
                   <td className="py-4 px-6 text-slate-400 text-xs">
                     {new Date(u.created_at).toLocaleDateString()}
                   </td>
                   <td className="py-4 px-6 text-right space-x-2">
-                    {editingId === u.id ? (
-                      <button
-                        onClick={() => saveUser(u.id)}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-semibold"
-                      >
-                        <Save className="w-3.5 h-3.5" /> Save
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => startEditing(u)}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600/10 border border-indigo-500/20 text-indigo-400 text-xs font-semibold"
-                      >
-                        <Edit3 className="w-3.5 h-3.5" /> Edit
-                      </button>
-                    )}
+                    <button
+                      onClick={() => startEditing(u)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600/10 border border-indigo-500/20 text-indigo-400 text-xs font-semibold"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" /> Edit
+                    </button>
                     {u.status === 'pending' && (
                       <button
                         onClick={() => handleStatusChange(u.id, 'approved')}
@@ -331,8 +297,45 @@ function UserApprovalsTab({ notify }) {
               ))}
             </tbody>
           </table>
+          <PaginationControls
+            page={page}
+            pageSize={pagination.page_size}
+            total={pagination.total}
+            totalPages={pagination.total_pages}
+            onPageChange={setPage}
+          />
         </div>
       )}
+      <AdminModal open={Boolean(editingUser)} title="Edit user" onClose={() => setEditingUser(null)}>
+        <form onSubmit={saveUser} className="space-y-4">
+          <label className="block text-xs font-semibold uppercase text-slate-300">
+            Full name
+            <input required value={editForm.full_name || ''} onChange={(e) => setEditForm({ ...editForm, full_name: e.target.value })} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" />
+          </label>
+          <label className="block text-xs font-semibold uppercase text-slate-300">
+            Email
+            <input type="email" required value={editForm.email || ''} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" />
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block text-xs font-semibold uppercase text-slate-300">
+              Role
+              <select value={editForm.role || 'user'} onChange={(e) => setEditForm({ ...editForm, role: e.target.value })} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100">
+                <option value="user">user</option><option value="admin">admin</option>
+              </select>
+            </label>
+            <label className="block text-xs font-semibold uppercase text-slate-300">
+              Status
+              <select value={editForm.status || 'pending'} onChange={(e) => setEditForm({ ...editForm, status: e.target.value })} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100">
+                <option value="pending">pending</option><option value="approved">approved</option><option value="rejected">rejected</option>
+              </select>
+            </label>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={() => setEditingUser(null)} className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300">Cancel</button>
+            <button type="submit" className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white"><Save className="mr-1 inline h-4 w-4" />Save user</button>
+          </div>
+        </form>
+      </AdminModal>
     </div>
   );
 }
@@ -344,16 +347,16 @@ function ExamsManagerTab({ notify }) {
   const [exams, setExams] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editingExamId, setEditingExamId] = useState(null);
-  const [examEdit, setExamEdit] = useState({});
-
-  const [examForm, setExamForm] = useState({
+  const [examModalOpen, setExamModalOpen] = useState(false);
+  const emptyExam = {
     code: '',
     title: '',
     description: '',
     duration_minutes: 90,
     total_questions: 60,
     passing_score_pct: 70.0,
-  });
+  };
+  const [examForm, setExamForm] = useState(emptyExam);
 
   const fetchExams = async () => {
     try {
@@ -373,31 +376,43 @@ function ExamsManagerTab({ notify }) {
   const handleCreateExam = async (e) => {
     e.preventDefault();
     try {
-      await adminApi.createExam(examForm);
-      notify('success', `Exam '${examForm.code}' created successfully`);
-      setExamForm({
-        code: '',
-        title: '',
-        description: '',
-        duration_minutes: 90,
-        total_questions: 60,
-        passing_score_pct: 70.0,
-      });
-      fetchExams();
+      if (editingExamId) {
+        const { passing_score_pct, ...fields } = examForm;
+        await adminApi.updateExam(editingExamId, {
+          ...fields,
+          passing_score_percentage: passing_score_pct,
+        });
+        notify('success', 'Exam updated successfully');
+      } else {
+        await adminApi.createExam(examForm);
+        notify('success', `Exam '${examForm.code}' created successfully`);
+      }
+      setExamModalOpen(false);
+      setEditingExamId(null);
+      setExamForm(emptyExam);
+      await fetchExams();
     } catch (err) {
-      notify('error', err.message || 'Failed to create exam');
+      notify('error', err.message || 'Failed to save exam');
     }
   };
 
-  const saveExam = async (id) => {
-    try {
-      await adminApi.updateExam(id, examEdit);
-      setEditingExamId(null);
-      await fetchExams();
-      notify('success', 'Exam updated successfully');
-    } catch (err) {
-      notify('error', err.message || 'Failed to update exam');
-    }
+  const openCreateExam = () => {
+    setEditingExamId(null);
+    setExamForm(emptyExam);
+    setExamModalOpen(true);
+  };
+
+  const openEditExam = (exam) => {
+    setEditingExamId(exam.id);
+    setExamForm({
+      code: exam.code,
+      title: exam.title,
+      description: exam.description || '',
+      duration_minutes: exam.duration_minutes,
+      total_questions: exam.total_questions,
+      passing_score_pct: exam.passing_score_percentage,
+    });
+    setExamModalOpen(true);
   };
 
   const deleteExam = async (exam) => {
@@ -420,11 +435,15 @@ function ExamsManagerTab({ notify }) {
         </p>
       </div>
 
-      {/* Formulário: Criar Exame */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-xl max-w-2xl">
-        <h3 className="text-base font-semibold text-white mb-4 flex items-center gap-2">
-          <Plus className="w-4 h-4 text-indigo-400" /> Create New Exam
-        </h3>
+      <button onClick={openCreateExam} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500">
+        <Plus className="h-4 w-4" /> Create Exam
+      </button>
+
+      <AdminModal
+        open={examModalOpen}
+        title={editingExamId ? 'Edit exam' : 'Create exam'}
+        onClose={() => setExamModalOpen(false)}
+      >
         <form onSubmit={handleCreateExam} className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -497,14 +516,12 @@ function ExamsManagerTab({ notify }) {
             </div>
           </div>
 
-          <button
-            type="submit"
-            className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-sm font-semibold text-white transition"
-          >
-            Save Exam
-          </button>
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={() => setExamModalOpen(false)} className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300">Cancel</button>
+            <button type="submit" className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">Save Exam</button>
+          </div>
         </form>
-      </div>
+      </AdminModal>
 
       {/* Tabela de Exames */}
       <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
@@ -533,103 +550,26 @@ function ExamsManagerTab({ notify }) {
               <tbody className="divide-y divide-slate-800/80">
                 {exams.map((exam) => (
                   <tr key={exam.id} className="hover:bg-slate-950/40">
-                    <td className="py-3.5 px-4 font-mono font-bold text-indigo-300">
-                      {editingExamId === exam.id ? (
-                        <input
-                          value={examEdit.code}
-                          onChange={(e) => setExamEdit({ ...examEdit, code: e.target.value })}
-                          className="w-20 px-2 py-1 bg-slate-950 border border-slate-700 rounded text-xs"
-                        />
-                      ) : (
-                        exam.code
-                      )}
-                    </td>
+                    <td className="py-3.5 px-4 font-mono font-bold text-indigo-300">{exam.code}</td>
                     <td className="py-3.5 px-4">
-                      {editingExamId === exam.id ? (
-                        <div className="space-y-1">
-                          <input
-                            value={examEdit.title}
-                            onChange={(e) => setExamEdit({ ...examEdit, title: e.target.value })}
-                            className="w-full px-2 py-1 bg-slate-950 border border-slate-700 rounded text-xs"
-                          />
-                          <textarea
-                            value={examEdit.description}
-                            onChange={(e) => setExamEdit({ ...examEdit, description: e.target.value })}
-                            placeholder="Description"
-                            className="w-full px-2 py-1 bg-slate-950 border border-slate-700 rounded text-xs"
-                            rows={2}
-                          />
-                        </div>
-                      ) : (
-                        <div>
-                          <div className="text-white font-medium">{exam.title}</div>
-                          {exam.description && <div className="text-xs text-slate-400">{exam.description}</div>}
-                        </div>
-                      )}
+                      <div>
+                        <div className="text-white font-medium">{exam.title}</div>
+                        {exam.description && <div className="text-xs text-slate-400">{exam.description}</div>}
+                      </div>
                     </td>
                     <td className="py-3.5 px-4 text-slate-300">
-                      {editingExamId === exam.id ? (
-                        <input
-                          type="number"
-                          value={examEdit.duration_minutes}
-                          onChange={(e) => setExamEdit({ ...examEdit, duration_minutes: e.target.value })}
-                          className="w-16 px-2 py-1 bg-slate-950 border border-slate-700 rounded text-xs"
-                        />
-                      ) : (
-                        `${exam.duration_minutes} min`
-                      )}
+                      {`${exam.duration_minutes} min`}
                     </td>
                     <td className="py-3.5 px-4 text-slate-300">
-                      {editingExamId === exam.id ? (
-                        <input
-                          type="number"
-                          value={examEdit.total_questions}
-                          onChange={(e) => setExamEdit({ ...examEdit, total_questions: e.target.value })}
-                          className="w-16 px-2 py-1 bg-slate-950 border border-slate-700 rounded text-xs"
-                        />
-                      ) : (
-                        exam.total_questions
-                      )}
+                      {exam.total_questions}
                     </td>
                     <td className="py-3.5 px-4 text-slate-300">
-                      {editingExamId === exam.id ? (
-                        <input
-                          type="number"
-                          step="0.1"
-                          value={examEdit.passing_score_percentage}
-                          onChange={(e) => setExamEdit({ ...examEdit, passing_score_percentage: e.target.value })}
-                          className="w-16 px-2 py-1 bg-slate-950 border border-slate-700 rounded text-xs"
-                        />
-                      ) : (
-                        `${exam.passing_score_percentage}%`
-                      )}
+                      {`${exam.passing_score_percentage}%`}
                     </td>
                     <td className="py-3.5 px-4 text-right whitespace-nowrap space-x-1.5">
-                      {editingExamId === exam.id ? (
-                        <button
-                          onClick={() => saveExam(exam.id)}
-                          className="px-2 py-1 rounded bg-indigo-600 text-white text-xs font-semibold"
-                        >
-                          <Save className="inline w-3 h-3 mr-1" /> Save
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => {
-                            setEditingExamId(exam.id);
-                            setExamEdit({
-                              code: exam.code,
-                              title: exam.title,
-                              description: exam.description || '',
-                              duration_minutes: exam.duration_minutes,
-                              total_questions: exam.total_questions,
-                              passing_score_percentage: exam.passing_score_percentage,
-                            });
-                          }}
-                          className="px-2 py-1 rounded bg-indigo-600/10 text-indigo-300 text-xs font-semibold"
-                        >
-                          <Edit3 className="inline w-3 h-3 mr-1" /> Edit
-                        </button>
-                      )}
+                      <button onClick={() => openEditExam(exam)} className="px-2 py-1 rounded bg-indigo-600/10 text-indigo-300 text-xs font-semibold">
+                        <Edit3 className="inline w-3 h-3 mr-1" /> Edit
+                      </button>
                       <button
                         onClick={() => deleteExam(exam)}
                         className="px-2 py-1 rounded bg-rose-600/10 text-rose-300 text-xs font-semibold"
@@ -658,7 +598,7 @@ function DomainsManagerTab({ notify }) {
   const [domainSearch, setDomainSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [editingDomainId, setEditingDomainId] = useState(null);
-  const [domainEdit, setDomainEdit] = useState({});
+  const [domainModalOpen, setDomainModalOpen] = useState(false);
 
   const [domainForm, setDomainForm] = useState({
     name: '',
@@ -684,38 +624,43 @@ function DomainsManagerTab({ notify }) {
     fetchExams();
   }, []);
 
-  const handleCreateDomain = async (e) => {
+  const handleSaveDomain = async (e) => {
     e.preventDefault();
-    if (!selectedExamId) {
+    if (!editingDomainId && !selectedExamId) {
       notify('error', 'Please select an exam first');
       return;
     }
     try {
-      await adminApi.createDomain({
-        exam_id: selectedExamId,
+      const payload = {
         name: domainForm.name,
         weight_percentage: parseFloat(domainForm.weight_percentage),
-      });
-      notify('success', 'Domain added successfully');
+      };
+      if (editingDomainId) {
+        await adminApi.updateDomain(editingDomainId, payload);
+        notify('success', 'Domain updated successfully');
+      } else {
+        await adminApi.createDomain({ exam_id: selectedExamId, ...payload });
+        notify('success', 'Domain added successfully');
+      }
+      setDomainModalOpen(false);
+      setEditingDomainId(null);
       setDomainForm({ name: '', weight_percentage: '' });
-      fetchExams();
+      await fetchExams();
     } catch (err) {
-      notify('error', err.message || 'Failed to add domain');
+      notify('error', err.message || 'Failed to save domain');
     }
   };
 
-  const saveDomain = async (id) => {
-    try {
-      await adminApi.updateDomain(id, {
-        ...domainEdit,
-        weight_percentage: parseFloat(domainEdit.weight_percentage),
-      });
-      setEditingDomainId(null);
-      await fetchExams();
-      notify('success', 'Domain updated successfully');
-    } catch (err) {
-      notify('error', err.message || 'Failed to update domain');
-    }
+  const openCreateDomain = () => {
+    setEditingDomainId(null);
+    setDomainForm({ name: '', weight_percentage: '' });
+    setDomainModalOpen(true);
+  };
+
+  const openEditDomain = (domain) => {
+    setEditingDomainId(domain.id);
+    setDomainForm({ name: domain.name, weight_percentage: domain.weight_percentage });
+    setDomainModalOpen(true);
   };
 
   const deleteDomain = async (domain) => {
@@ -756,12 +701,17 @@ function DomainsManagerTab({ notify }) {
         </p>
       </div>
 
-      {/* Formulário: Adicionar Domínio */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-xl max-w-2xl">
-        <h3 className="text-base font-semibold text-white mb-4 flex items-center gap-2">
-          <Plus className="w-4 h-4 text-emerald-400" /> Add Exam Domain
-        </h3>
-        <form onSubmit={handleCreateDomain} className="space-y-4">
+      <button onClick={openCreateDomain} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500">
+        <Plus className="h-4 w-4" /> Add Domain
+      </button>
+
+      <AdminModal
+        open={domainModalOpen}
+        title={editingDomainId ? 'Edit domain' : 'Add exam domain'}
+        onClose={() => setDomainModalOpen(false)}
+      >
+        <form onSubmit={handleSaveDomain} className="space-y-4">
+          {!editingDomainId && (
           <div>
             <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">Target Exam</label>
             <select
@@ -776,6 +726,7 @@ function DomainsManagerTab({ notify }) {
               ))}
             </select>
           </div>
+          )}
 
           <div>
             <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">Domain Name</label>
@@ -804,14 +755,12 @@ function DomainsManagerTab({ notify }) {
             />
           </div>
 
-          <button
-            type="submit"
-            className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-sm font-semibold text-white transition"
-          >
-            Add Domain
-          </button>
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={() => setDomainModalOpen(false)} className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300">Cancel</button>
+            <button type="submit" className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white">{editingDomainId ? 'Save Domain' : 'Add Domain'}</button>
+          </div>
         </form>
-      </div>
+      </AdminModal>
 
       {/* Tabela de Todos os Domínios */}
       <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
@@ -871,52 +820,14 @@ function DomainsManagerTab({ notify }) {
                     <td className="py-3.5 px-4 font-mono font-semibold text-indigo-300 whitespace-nowrap">
                       {domain.exam_code} - {domain.exam_title}
                     </td>
-                    <td className="py-3.5 px-4 text-slate-200">
-                      {editingDomainId === domain.id ? (
-                        <input
-                          value={domainEdit.name}
-                          onChange={(e) => setDomainEdit({ ...domainEdit, name: e.target.value })}
-                          className="w-full px-2 py-1 bg-slate-950 border border-slate-700 rounded text-xs"
-                        />
-                      ) : (
-                        domain.name
-                      )}
-                    </td>
+                    <td className="py-3.5 px-4 text-slate-200">{domain.name}</td>
                     <td className="py-3.5 px-4 text-emerald-400 font-mono">
-                      {editingDomainId === domain.id ? (
-                        <input
-                          type="number"
-                          step="0.1"
-                          value={domainEdit.weight_percentage}
-                          onChange={(e) => setDomainEdit({ ...domainEdit, weight_percentage: e.target.value })}
-                          className="w-20 px-2 py-1 bg-slate-950 border border-slate-700 rounded text-xs"
-                        />
-                      ) : (
-                        `${domain.weight_percentage}%`
-                      )}
+                      {`${domain.weight_percentage}%`}
                     </td>
                     <td className="py-3.5 px-4 text-right whitespace-nowrap space-x-1.5">
-                      {editingDomainId === domain.id ? (
-                        <button
-                          onClick={() => saveDomain(domain.id)}
-                          className="px-2 py-1 rounded bg-emerald-600 text-white text-xs font-semibold"
-                        >
-                          <Save className="inline w-3 h-3 mr-1" /> Save
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => {
-                            setEditingDomainId(domain.id);
-                            setDomainEdit({
-                              name: domain.name,
-                              weight_percentage: domain.weight_percentage,
-                            });
-                          }}
-                          className="px-2 py-1 rounded bg-emerald-600/10 text-emerald-300 text-xs font-semibold"
-                        >
-                          <Edit3 className="inline w-3 h-3 mr-1" /> Edit
-                        </button>
-                      )}
+                      <button onClick={() => openEditDomain(domain)} className="px-2 py-1 rounded bg-emerald-600/10 text-emerald-300 text-xs font-semibold">
+                        <Edit3 className="inline w-3 h-3 mr-1" /> Edit
+                      </button>
                       <button
                         onClick={() => deleteDomain(domain)}
                         className="px-2 py-1 rounded bg-rose-600/10 text-rose-300 text-xs font-semibold"
@@ -939,10 +850,15 @@ function DomainsManagerTab({ notify }) {
 // TAB 4: Question Manager (Individual Form + Bulk JSON)
 // =========================================================================
 function QuestionManagerTab({ notify }) {
-  const [mode, setMode] = useState('single'); // 'single' | 'bulk'
   const [exams, setExams] = useState([]);
   const [questions, setQuestions] = useState([]);
   const [questionSearch, setQuestionSearch] = useState('');
+  const [appliedQuestionSearch, setAppliedQuestionSearch] = useState('');
+  const [questionPage, setQuestionPage] = useState(1);
+  const [questionPagination, setQuestionPagination] = useState({ page_size: 25, total: 0, total_pages: 0 });
+  const [questionsLoading, setQuestionsLoading] = useState(true);
+  const [questionReload, setQuestionReload] = useState(0);
+  const [questionModal, setQuestionModal] = useState(null);
   const [editingQuestionId, setEditingQuestionId] = useState(null);
   const [questionEdit, setQuestionEdit] = useState({});
   const [selectedExamId, setSelectedExamId] = useState('');
@@ -973,18 +889,40 @@ function QuestionManagerTab({ notify }) {
           setSelectedDomainId(examList[0].domains[0].id);
         }
       }
-    });
-    fetchQuestions();
+    }).catch((err) => notify('error', err.message || 'Failed to load exams'));
   }, []);
 
-  const fetchQuestions = async () => {
-    try {
-      const data = await adminApi.getQuestions();
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      setQuestionPage(1);
+      setAppliedQuestionSearch(questionSearch.trim());
+    }, 300);
+    return () => clearTimeout(timeout);
+  }, [questionSearch]);
+
+  useEffect(() => {
+    let active = true;
+    setQuestionsLoading(true);
+    adminApi.getQuestions({
+      search: appliedQuestionSearch,
+      page: questionPage,
+      page_size: questionPagination.page_size,
+    }).then((data) => {
+      if (!active) return;
       setQuestions(data.questions || []);
-    } catch (err) {
-      notify('error', err.message || 'Failed to load questions');
-    }
-  };
+      setQuestionPagination(data.pagination || { page: questionPage, page_size: 25, total: 0, total_pages: 0 });
+      if (data.pagination && questionPage > Math.max(data.pagination.total_pages, 1)) {
+        setQuestionPage(Math.max(data.pagination.total_pages, 1));
+      }
+    }).catch((err) => {
+      if (active) notify('error', err.message || 'Failed to load questions');
+    }).finally(() => {
+      if (active) setQuestionsLoading(false);
+    });
+    return () => {
+      active = false;
+    };
+  }, [appliedQuestionSearch, questionPage, questionPagination.page_size, questionReload, notify]);
 
   const handleExamChange = (examId) => {
     setSelectedExamId(examId);
@@ -1000,6 +938,122 @@ function QuestionManagerTab({ notify }) {
     const updated = [...options];
     updated[idx].text = text;
     setOptions(updated);
+  };
+
+  const handleOptionCountChange = (count) => {
+    const updatedOptions = Array.from({ length: count }, (_, index) => {
+      const id = String.fromCharCode(97 + index);
+      return options.find((option) => option.id === id) || { id, text: '' };
+    });
+    const validCorrectAnswers = questionType === 'drag_and_drop'
+      ? correctAnswers.filter((pair) =>
+          Array.isArray(pair) &&
+          updatedOptions.some((option) => option.id === pair[0]) &&
+          updatedOptions.some((option) => option.id === pair[1])
+        )
+      : correctAnswers.filter((id) => updatedOptions.some((option) => option.id === id));
+    setOptions(updatedOptions);
+    setCorrectAnswers(
+      validCorrectAnswers.length
+        ? validCorrectAnswers
+        : questionType === 'drag_and_drop'
+          ? []
+          : [updatedOptions[0].id]
+    );
+  };
+
+  const handleQuestionTypeChange = (type) => {
+    setQuestionType(type);
+    if (type === 'drag_and_drop') {
+      setOptions((current) => {
+        const evenLength = current.length % 2 === 0 ? current.length : Math.min(current.length + 1, 8);
+        return Array.from({ length: evenLength }, (_, index) =>
+          current[index] || { id: String.fromCharCode(97 + index), text: '' }
+        );
+      });
+      setCorrectAnswers([]);
+    } else if (questionType === 'drag_and_drop') {
+      setCorrectAnswers([options[0].id]);
+    } else if (type === 'single_choice' && correctAnswers.length > 1) {
+      setCorrectAnswers([correctAnswers[0]]);
+    }
+  };
+
+  const updateMatchingAnswer = (leftId, rightId) => {
+    setCorrectAnswers((current) => {
+      const pairs = current.filter((pair) => Array.isArray(pair) && pair[0] !== leftId && (!rightId || pair[1] !== rightId));
+      if (!rightId) return pairs;
+      return [...pairs, [leftId, rightId]];
+    });
+  };
+
+  const handleEditedOptionCountChange = (count) => {
+    const currentOptions = Array.isArray(questionEdit.options) ? questionEdit.options : [];
+    const updatedOptions = Array.from({ length: count }, (_, index) => {
+      if (currentOptions[index]) return currentOptions[index];
+      let id = String.fromCharCode(97 + index);
+      while (currentOptions.some((option) => option.id === id)) id = `answer-${index + 1}`;
+      return { id, text: '' };
+    });
+    const availableIds = updatedOptions.map((option) => option.id);
+    const answers = questionEdit.type === 'drag_and_drop'
+      ? (questionEdit.correct_answers || []).filter((pair) =>
+          Array.isArray(pair) && availableIds.includes(pair[0]) && availableIds.includes(pair[1])
+        )
+      : (questionEdit.correct_answers || []).filter((id) => availableIds.includes(id));
+    setQuestionEdit({
+      ...questionEdit,
+      options: updatedOptions,
+      correct_answers: answers.length
+        ? answers
+        : questionEdit.type === 'drag_and_drop'
+          ? []
+          : [updatedOptions[0].id],
+    });
+  };
+
+  const handleEditedQuestionTypeChange = (type) => {
+    const currentOptions = questionEdit.options || [];
+    if (type === 'drag_and_drop') {
+      const evenLength = currentOptions.length % 2 === 0 ? currentOptions.length : Math.min(currentOptions.length + 1, 8);
+      const options = Array.from({ length: evenLength }, (_, index) =>
+        currentOptions[index] || { id: String.fromCharCode(97 + index), text: '' }
+      );
+      setQuestionEdit({ ...questionEdit, type, options, correct_answers: [] });
+    } else {
+      const answers = Array.isArray(questionEdit.correct_answers) &&
+        !questionEdit.correct_answers.some(Array.isArray)
+        ? questionEdit.correct_answers
+        : [currentOptions[0]?.id].filter(Boolean);
+      setQuestionEdit({
+        ...questionEdit,
+        type,
+        correct_answers: type === 'single_choice' ? [answers[0] || currentOptions[0]?.id] : answers,
+      });
+    }
+  };
+
+  const updateEditedMatchingAnswer = (leftId, rightId) => {
+    const current = questionEdit.correct_answers || [];
+    const pairs = current.filter((pair) => Array.isArray(pair) && pair[0] !== leftId && (!rightId || pair[1] !== rightId));
+    setQuestionEdit({
+      ...questionEdit,
+      correct_answers: rightId ? [...pairs, [leftId, rightId]] : pairs,
+    });
+  };
+
+  const toggleEditedCorrectAnswer = (optionId) => {
+    if (questionEdit.type === 'single_choice') {
+      setQuestionEdit({ ...questionEdit, correct_answers: [optionId] });
+      return;
+    }
+    const answers = questionEdit.correct_answers || [];
+    setQuestionEdit({
+      ...questionEdit,
+      correct_answers: answers.includes(optionId)
+        ? (answers.length > 1 ? answers.filter((id) => id !== optionId) : answers)
+        : [...answers, optionId],
+    });
   };
 
   const toggleCorrectAnswer = (optionId) => {
@@ -1038,7 +1092,8 @@ function QuestionManagerTab({ notify }) {
         body: JSON.stringify(payload),
       });
       notify('success', 'Question saved successfully');
-      fetchQuestions();
+      setQuestionModal(null);
+      setQuestionReload((value) => value + 1);
       setQuestionText('');
       setExplanation('');
     } catch (err) {
@@ -1061,40 +1116,34 @@ function QuestionManagerTab({ notify }) {
 
       notify('success', `Bulk upload of ${parsed.length} questions successful!`);
       setBulkJson('');
-      fetchQuestions();
+      setQuestionModal(null);
+      setQuestionReload((value) => value + 1);
     } catch (err) {
       notify('error', err.message || 'Invalid JSON format or upload error');
     }
   };
 
   const activeDomains = exams.find((e) => e.id === selectedExamId)?.domains || [];
-  const visibleQuestions = questions.filter((question) =>
-    `${question.question_text} ${question.exam_code} ${question.exam_title} ${question.domain_name}`
-      .toLowerCase()
-      .includes(questionSearch.toLowerCase())
-  );
-
   const startQuestionEdit = (question) => {
     setEditingQuestionId(question.id);
     setQuestionEdit({
       domain_id: question.domain_id,
       question_text: question.question_text,
       type: question.type,
-      options: JSON.stringify(question.options, null, 2),
-      correct_answers: JSON.stringify(question.correct_answers),
+      options: question.options,
+      correct_answers: question.correct_answers,
       explanation: question.explanation || '',
     });
+    setQuestionModal('edit');
   };
 
-  const saveQuestion = async (id) => {
+  const saveQuestion = async (event) => {
+    event.preventDefault();
     try {
-      await adminApi.updateQuestion(id, {
-        ...questionEdit,
-        options: JSON.parse(questionEdit.options),
-        correct_answers: JSON.parse(questionEdit.correct_answers),
-      });
+      await adminApi.updateQuestion(editingQuestionId, questionEdit);
       setEditingQuestionId(null);
-      await fetchQuestions();
+      setQuestionModal(null);
+      setQuestionReload((value) => value + 1);
       notify('success', 'Question updated successfully');
     } catch (err) {
       notify('error', err.message || 'Invalid question JSON or update failed');
@@ -1105,7 +1154,7 @@ function QuestionManagerTab({ notify }) {
     if (!window.confirm('Delete this question? This action cannot be undone.')) return;
     try {
       await adminApi.deleteQuestion(question.id);
-      setQuestions((prev) => prev.filter((item) => item.id !== question.id));
+      setQuestionReload((value) => value + 1);
       notify('success', 'Question deleted successfully');
     } catch (err) {
       notify('error', err.message || 'Failed to delete question');
@@ -1121,29 +1170,23 @@ function QuestionManagerTab({ notify }) {
             Create single exam questions or bulk-import formatted JSON pools.
           </p>
         </div>
-
-        {/* Toggle Single vs Bulk */}
-        <div className="flex bg-slate-900 border border-slate-800 p-1 rounded-xl w-fit">
+        <div className="flex gap-2">
           <button
-            onClick={() => setMode('single')}
-            className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition ${
-              mode === 'single' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
-            }`}
+            onClick={() => setQuestionModal('create')}
+            disabled={!selectedDomainId}
+            className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Form Input
+            <Plus className="h-4 w-4" /> Add Question
           </button>
           <button
-            onClick={() => setMode('bulk')}
-            className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition ${
-              mode === 'bulk' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
-            }`}
+            onClick={() => setQuestionModal('bulk')}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-800"
           >
-            Bulk JSON Upload
+            <Upload className="h-4 w-4" /> Bulk Import
           </button>
         </div>
       </div>
 
-      {/* Seletor de Exame e Domínio */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-900 border border-slate-800 p-4 rounded-xl">
         <div>
           <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">Target Exam</label>
@@ -1180,131 +1223,6 @@ function QuestionManagerTab({ notify }) {
         </div>
       </div>
 
-      {mode === 'single' ? (
-        <form onSubmit={handleSingleSubmit} className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-5">
-          <div>
-            <label className="block text-xs font-semibold text-slate-300 uppercase mb-2">Question Prompt</label>
-            <textarea
-              required
-              rows={3}
-              value={questionText}
-              onChange={(e) => setQuestionText(e.target.value)}
-              placeholder="Ex: Which table stores user records in ServiceNow?"
-              className="w-full px-3 py-2 bg-slate-950/60 border border-slate-700/80 rounded-lg text-sm text-slate-100 placeholder-slate-500"
-            />
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 uppercase mb-2">Question Type</label>
-              <select
-                value={questionType}
-                onChange={(e) => {
-                  setQuestionType(e.target.value);
-                  if (e.target.value === 'single_choice' && correctAnswers.length > 1) {
-                    setCorrectAnswers([correctAnswers[0]]);
-                  }
-                }}
-                className="select-custom w-full pl-3 py-2 bg-slate-950/60 border border-slate-700/80 rounded-lg text-sm text-slate-100 cursor-pointer"
-              >
-                <option value="single_choice">Single Choice (1 Correct)</option>
-                <option value="multiple_choice">Multiple Choice (Multiple Correct)</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 uppercase mb-2">
-                Explanation (shown during review)
-              </label>
-              <input
-                type="text"
-                value={explanation}
-                onChange={(e) => setExplanation(e.target.value)}
-                placeholder="Ex: The sys_user table stores user profile records."
-                className="w-full px-3 py-2 bg-slate-950/60 border border-slate-700/80 rounded-lg text-sm text-slate-100 placeholder-slate-500"
-              />
-            </div>
-          </div>
-
-          {/* Opções e marcação de respostas certas */}
-          <div>
-            <label className="block text-xs font-semibold text-slate-300 uppercase mb-2">
-              Options (Check the box next to correct answer(s))
-            </label>
-            <div className="space-y-2.5">
-              {options.map((opt, idx) => {
-                const isSelected = correctAnswers.includes(opt.id);
-                return (
-                  <div key={opt.id} className="flex items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={() => toggleCorrectAnswer(opt.id)}
-                      className={`w-7 h-7 shrink-0 rounded flex items-center justify-center font-bold text-xs uppercase transition border ${
-                        isSelected
-                          ? 'bg-emerald-600 border-emerald-500 text-white'
-                          : 'bg-slate-950 border-slate-700 text-slate-400 hover:border-slate-500'
-                      }`}
-                    >
-                      {opt.id}
-                    </button>
-                    <input
-                      type="text"
-                      required
-                      placeholder={`Option ${opt.id.toUpperCase()} text`}
-                      value={opt.text}
-                      onChange={(e) => handleOptionChange(idx, e.target.value)}
-                      className="flex-1 px-3 py-2 bg-slate-950/60 border border-slate-700/80 rounded-lg text-sm text-slate-100"
-                    />
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <button
-            type="submit"
-            className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 font-semibold text-sm rounded-lg text-white transition shadow-lg shadow-indigo-600/20"
-          >
-            Save Question
-          </button>
-        </form>
-      ) : (
-        <form onSubmit={handleBulkSubmit} className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
-          <div>
-            <label className="block text-xs font-semibold text-slate-300 uppercase mb-2">Paste JSON Array</label>
-            <textarea
-              required
-              rows={12}
-              value={bulkJson}
-              onChange={(e) => setBulkJson(e.target.value)}
-              placeholder={`[
-  {
-    "domain_id": "${selectedDomainId || 'uuid-here'}",
-    "question_text": "What is the primary table for incidents in ServiceNow?",
-    "type": "single_choice",
-    "options": [
-      { "id": "a", "text": "incident" },
-      { "id": "b", "text": "problem" },
-      { "id": "c", "text": "change_request" },
-      { "id": "d", "text": "sys_user" }
-    ],
-    "correct_answers": ["a"],
-    "explanation": "Incidents are recorded in the incident table which extends task."
-  }
-]`}
-              className="w-full px-3 py-2 bg-slate-950 border border-slate-700/80 rounded-lg text-xs font-mono text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-            />
-          </div>
-
-          <button
-            type="submit"
-            className="w-full flex items-center justify-center gap-2 py-2.5 bg-indigo-600 hover:bg-indigo-500 font-semibold text-sm rounded-lg text-white transition shadow-lg shadow-indigo-600/20"
-          >
-            <Upload className="w-4 h-4" /> Import JSON Questions
-          </button>
-        </form>
-      )}
-
       <section className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
         <div className="p-4 border-b border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-3">
           <div>
@@ -1321,7 +1239,13 @@ function QuestionManagerTab({ notify }) {
             />
           </div>
         </div>
-        <div className="overflow-x-auto">
+        {questionsLoading ? (
+          <div className="flex items-center justify-center p-10 text-slate-400">
+            <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading questions...
+          </div>
+        ) : questionPagination.total === 0 ? (
+          <p className="p-6 text-center text-sm text-slate-500">No questions found.</p>
+        ) : <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead className="bg-slate-950/60 text-xs uppercase tracking-wider text-slate-400">
               <tr>
@@ -1333,96 +1257,20 @@ function QuestionManagerTab({ notify }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/80">
-              {visibleQuestions.map((question) => (
+              {questions.map((question) => (
                 <tr key={question.id} className="align-top hover:bg-slate-950/40">
-                  <td className="py-3 px-4 min-w-[280px]">
-                    {editingQuestionId === question.id ? (
-                      <textarea
-                        rows={3}
-                        value={questionEdit.question_text}
-                        onChange={(e) => setQuestionEdit({ ...questionEdit, question_text: e.target.value })}
-                        className="w-full px-2 py-1 bg-slate-950 border border-slate-700 rounded text-sm"
-                      />
-                    ) : (
-                      <span className="text-white">{question.question_text}</span>
-                    )}
-                    {editingQuestionId === question.id && (
-                      <textarea
-                        rows={4}
-                        value={questionEdit.options}
-                        onChange={(e) => setQuestionEdit({ ...questionEdit, options: e.target.value })}
-                        className="w-full mt-2 px-2 py-1 bg-slate-950 border border-slate-700 rounded text-xs font-mono"
-                      />
-                    )}
-                    {editingQuestionId === question.id && (
-                      <input
-                        value={questionEdit.correct_answers}
-                        onChange={(e) => setQuestionEdit({ ...questionEdit, correct_answers: e.target.value })}
-                        placeholder='["a"]'
-                        className="w-full mt-2 px-2 py-1 bg-slate-950 border border-slate-700 rounded text-xs font-mono"
-                      />
-                    )}
-                    {editingQuestionId === question.id && (
-                      <input
-                        value={questionEdit.explanation}
-                        onChange={(e) => setQuestionEdit({ ...questionEdit, explanation: e.target.value })}
-                        placeholder="Explanation"
-                        className="w-full mt-2 px-2 py-1 bg-slate-950 border border-slate-700 rounded text-xs"
-                      />
-                    )}
-                  </td>
+                  <td className="min-w-[280px] py-3 px-4"><span className="text-white">{question.question_text}</span></td>
                   <td className="py-3 px-4 text-indigo-300 whitespace-nowrap">
                     {question.exam_code} - {question.exam_title}
                   </td>
-                  <td className="py-3 px-4 text-slate-300">
-                    {editingQuestionId === question.id ? (
-                      <select
-                        value={questionEdit.domain_id}
-                        onChange={(e) => setQuestionEdit({ ...questionEdit, domain_id: e.target.value })}
-                        className="px-2 py-1 bg-slate-950 border border-slate-700 rounded text-xs"
-                      >
-                        {exams
-                          .flatMap((exam) => exam.domains || [])
-                          .map((domain) => (
-                            <option key={domain.id} value={domain.id}>
-                              {domain.name}
-                            </option>
-                          ))}
-                      </select>
-                    ) : (
-                      question.domain_name
-                    )}
-                  </td>
+                  <td className="py-3 px-4 text-slate-300">{question.domain_name}</td>
                   <td className="py-3 px-4 text-slate-400">
-                    {editingQuestionId === question.id ? (
-                      <select
-                        value={questionEdit.type}
-                        onChange={(e) => setQuestionEdit({ ...questionEdit, type: e.target.value })}
-                        className="px-2 py-1 bg-slate-950 border border-slate-700 rounded text-xs"
-                      >
-                        <option value="single_choice">single</option>
-                        <option value="multiple_choice">multiple</option>
-                      </select>
-                    ) : (
-                      question.type
-                    )}
+                    {question.type === 'single_choice' ? 'Single choice' : question.type === 'multiple_choice' ? 'Multiple choice' : 'Drag and drop'}
                   </td>
                   <td className="py-3 px-4 text-right whitespace-nowrap">
-                    {editingQuestionId === question.id ? (
-                      <button
-                        onClick={() => saveQuestion(question.id)}
-                        className="inline-flex items-center gap-1 px-2 py-1 mr-1 rounded bg-indigo-600 text-white text-xs"
-                      >
-                        <Save className="w-3 h-3" /> Save
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => startQuestionEdit(question)}
-                        className="inline-flex items-center gap-1 px-2 py-1 mr-1 rounded bg-indigo-600/10 text-indigo-300 text-xs"
-                      >
-                        <Edit3 className="w-3 h-3" /> Edit
-                      </button>
-                    )}
+                    <button onClick={() => startQuestionEdit(question)} className="inline-flex items-center gap-1 rounded bg-indigo-600/10 px-2 py-1 mr-1 text-xs text-indigo-300">
+                      <Edit3 className="h-3 w-3" /> Edit
+                    </button>
                     <button
                       onClick={() => deleteQuestion(question)}
                       className="inline-flex items-center gap-1 px-2 py-1 rounded bg-rose-600/10 text-rose-300 text-xs"
@@ -1434,11 +1282,212 @@ function QuestionManagerTab({ notify }) {
               ))}
             </tbody>
           </table>
-          {visibleQuestions.length === 0 && (
-            <p className="p-6 text-center text-sm text-slate-500">No questions found.</p>
-          )}
+          <PaginationControls
+            page={questionPage}
+            pageSize={questionPagination.page_size}
+            total={questionPagination.total}
+            totalPages={questionPagination.total_pages}
+            onPageChange={setQuestionPage}
+          />
         </div>
+        }
       </section>
+
+      <AdminModal
+        open={questionModal === 'create'}
+        title="Create question"
+        onClose={() => setQuestionModal(null)}
+        size="max-w-3xl"
+      >
+        <form onSubmit={handleSingleSubmit} className="space-y-5">
+          <div>
+            <label className="block text-xs font-semibold uppercase text-slate-300 mb-2">Question prompt</label>
+            <textarea required rows={3} value={questionText} onChange={(e) => setQuestionText(e.target.value)} className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" />
+          </div>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <label className="block text-xs font-semibold uppercase text-slate-300">
+              Question type
+              <select value={questionType} onChange={(e) => handleQuestionTypeChange(e.target.value)} className="select-custom mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100">
+                <option value="single_choice">Single choice</option>
+                <option value="multiple_choice">Multiple choice</option>
+                <option value="drag_and_drop">Drag and drop</option>
+              </select>
+            </label>
+            <label className="block text-xs font-semibold uppercase text-slate-300">
+              Number of answer options
+              <select value={options.length} onChange={(e) => handleOptionCountChange(Number(e.target.value))} className="select-custom mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100">
+                {Array.from({ length: 7 }, (_, index) => index + 2)
+                  .filter((count) => questionType !== 'drag_and_drop' || count % 2 === 0)
+                  .map((count) => <option key={count} value={count}>{count} answers{questionType === 'drag_and_drop' ? ` (${count / 2} pairs)` : ''}</option>)}
+              </select>
+            </label>
+            <label className="block text-xs font-semibold uppercase text-slate-300">
+              Explanation
+              <input value={explanation} onChange={(e) => setExplanation(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" />
+            </label>
+          </div>
+          {questionType === 'drag_and_drop' ? (
+            <fieldset className="space-y-3">
+              <legend className="mb-2 text-xs font-semibold uppercase text-slate-300">Enter the matching pairs</legend>
+              {options.slice(0, options.length / 2).map((leftOption, index) => {
+                const rightOptions = options.slice(options.length / 2);
+                const selectedRight = correctAnswers.find((pair) => pair[0] === leftOption.id)?.[1] || '';
+                const otherSelections = correctAnswers.filter((pair) => pair[0] !== leftOption.id).map((pair) => pair[1]);
+                return (
+                  <div key={leftOption.id} className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <label className="flex items-center gap-2 text-xs text-slate-400">
+                      <span className="w-6 font-bold uppercase">{leftOption.id}</span>
+                      <input required value={leftOption.text} onChange={(e) => handleOptionChange(index, e.target.value)} placeholder={`Prompt ${leftOption.id.toUpperCase()}`} className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" />
+                    </label>
+                    <label className="flex items-center gap-2 text-xs text-slate-400">
+                      <span className="w-6 font-bold uppercase">{rightOptions[index].id}</span>
+                      <input required value={rightOptions[index].text} onChange={(e) => handleOptionChange(index + rightOptions.length, e.target.value)} placeholder={`Match ${rightOptions[index].id.toUpperCase()}`} className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" />
+                      <select required aria-label={`Correct match for ${leftOption.id}`} value={selectedRight} onChange={(e) => updateMatchingAnswer(leftOption.id, e.target.value)} className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-slate-100">
+                        <option value="">Pair with</option>
+                        {rightOptions.map((option) => <option key={option.id} value={option.id} disabled={otherSelections.includes(option.id)}>{option.id.toUpperCase()}</option>)}
+                      </select>
+                    </label>
+                  </div>
+                );
+              })}
+            </fieldset>
+          ) : (
+            <fieldset>
+              <legend className="mb-2 text-xs font-semibold uppercase text-slate-300">Select correct answer(s)</legend>
+              <div className="space-y-2">
+                {options.map((option, index) => (
+                  <div key={option.id} className="flex items-center gap-3">
+                    <button type="button" aria-label={`Mark answer ${option.id} as correct`} aria-pressed={correctAnswers.includes(option.id)} onClick={() => toggleCorrectAnswer(option.id)} className={`h-8 w-8 rounded border text-xs font-bold uppercase ${correctAnswers.includes(option.id) ? 'border-emerald-500 bg-emerald-600 text-white' : 'border-slate-700 bg-slate-950 text-slate-400'}`}>
+                      {option.id}
+                    </button>
+                    <input required value={option.text} onChange={(e) => handleOptionChange(index, e.target.value)} placeholder={`Answer ${option.id.toUpperCase()}`} className="flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" />
+                  </div>
+                ))}
+              </div>
+            </fieldset>
+          )}
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={() => setQuestionModal(null)} className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300">Cancel</button>
+            <button type="submit" className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">Save question</button>
+          </div>
+        </form>
+      </AdminModal>
+
+      <AdminModal
+        open={questionModal === 'bulk'}
+        title="Bulk import questions"
+        onClose={() => setQuestionModal(null)}
+        size="max-w-3xl"
+      >
+        <form onSubmit={handleBulkSubmit} className="space-y-4">
+          <label className="block text-xs font-semibold uppercase text-slate-300">
+            Paste JSON array
+            <textarea required rows={14} value={bulkJson} onChange={(e) => setBulkJson(e.target.value)} placeholder={`[
+  {
+    "domain_id": "${selectedDomainId || 'uuid-here'}",
+    "question_text": "What is the primary table for incidents?",
+    "type": "single_choice",
+    "options": [
+      { "id": "a", "text": "incident" },
+      { "id": "b", "text": "problem" }
+    ],
+    "correct_answers": ["a"]
+  }
+]`} className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-100" />
+          </label>
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={() => setQuestionModal(null)} className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300">Cancel</button>
+            <button type="submit" className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white"><Upload className="h-4 w-4" />Import questions</button>
+          </div>
+        </form>
+      </AdminModal>
+
+      <AdminModal
+        open={questionModal === 'edit'}
+        title="Edit question"
+        onClose={() => setQuestionModal(null)}
+        size="max-w-3xl"
+      >
+        <form onSubmit={saveQuestion} className="space-y-4">
+          <label className="block text-xs font-semibold uppercase text-slate-300">
+            Question prompt
+            <textarea required rows={3} value={questionEdit.question_text || ''} onChange={(e) => setQuestionEdit({ ...questionEdit, question_text: e.target.value })} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" />
+          </label>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <label className="block text-xs font-semibold uppercase text-slate-300">
+              Question type
+              <select value={questionEdit.type || 'single_choice'} onChange={(e) => handleEditedQuestionTypeChange(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100">
+                <option value="single_choice">Single choice</option><option value="multiple_choice">Multiple choice</option><option value="drag_and_drop">Drag and drop</option>
+              </select>
+            </label>
+            <label className="block text-xs font-semibold uppercase text-slate-300">
+              Domain
+              <select value={questionEdit.domain_id || ''} onChange={(e) => setQuestionEdit({ ...questionEdit, domain_id: e.target.value })} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100">
+                {exams.flatMap((exam) => exam.domains || []).map((domain) => <option key={domain.id} value={domain.id}>{domain.name}</option>)}
+              </select>
+            </label>
+          </div>
+          <label className="block text-xs font-semibold uppercase text-slate-300">
+            Number of answer options
+            <select value={questionEdit.options?.length || 0} onChange={(e) => handleEditedOptionCountChange(Number(e.target.value))} className="mt-1 w-full max-w-xs rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100">
+              {Array.from({ length: Math.max(8, questionEdit.options?.length || 0) - 1 }, (_, index) => index + 2)
+                .filter((count) => questionEdit.type !== 'drag_and_drop' || count % 2 === 0)
+                .map((count) => <option key={count} value={count}>{count} answers{questionEdit.type === 'drag_and_drop' ? ` (${count / 2} pairs)` : ''}</option>)}
+            </select>
+          </label>
+          {questionEdit.type === 'drag_and_drop' ? (
+            <fieldset className="space-y-3">
+              <legend className="mb-2 text-xs font-semibold uppercase text-slate-300">Enter the matching pairs</legend>
+              {(questionEdit.options || []).slice(0, (questionEdit.options || []).length / 2).map((leftOption, index) => {
+                const rightOptions = questionEdit.options.slice(questionEdit.options.length / 2);
+                const selectedRight = (questionEdit.correct_answers || []).find((pair) => pair[0] === leftOption.id)?.[1] || '';
+                const otherSelections = (questionEdit.correct_answers || []).filter((pair) => pair[0] !== leftOption.id).map((pair) => pair[1]);
+                return (
+                  <div key={leftOption.id} className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <label className="flex items-center gap-2 text-xs text-slate-400">
+                      <span className="w-6 font-bold uppercase">{leftOption.id}</span>
+                      <input required value={leftOption.text} onChange={(e) => setQuestionEdit({ ...questionEdit, options: questionEdit.options.map((item, itemIndex) => itemIndex === index ? { ...item, text: e.target.value } : item) })} className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" />
+                    </label>
+                    <label className="flex items-center gap-2 text-xs text-slate-400">
+                      <span className="w-6 font-bold uppercase">{rightOptions[index].id}</span>
+                      <input required value={rightOptions[index].text} onChange={(e) => setQuestionEdit({ ...questionEdit, options: questionEdit.options.map((item, itemIndex) => itemIndex === index + rightOptions.length ? { ...item, text: e.target.value } : item) })} className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" />
+                      <select required aria-label={`Correct match for ${leftOption.id}`} value={selectedRight} onChange={(e) => updateEditedMatchingAnswer(leftOption.id, e.target.value)} className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-slate-100">
+                        <option value="">Pair with</option>
+                        {rightOptions.map((option) => <option key={option.id} value={option.id} disabled={otherSelections.includes(option.id)}>{option.id.toUpperCase()}</option>)}
+                      </select>
+                    </label>
+                  </div>
+                );
+              })}
+            </fieldset>
+          ) : (
+            <fieldset>
+              <legend className="mb-2 text-xs font-semibold uppercase text-slate-300">Select correct answer(s)</legend>
+              <div className="space-y-2">
+                {(questionEdit.options || []).map((option, index) => (
+                  <div key={`${option.id}-${index}`} className="flex items-center gap-3">
+                    <button type="button" aria-label={`Mark answer ${option.id} as correct`} aria-pressed={(questionEdit.correct_answers || []).includes(option.id)} onClick={() => toggleEditedCorrectAnswer(option.id)} className={`h-8 w-8 rounded border text-xs font-bold uppercase ${(questionEdit.correct_answers || []).includes(option.id) ? 'border-emerald-500 bg-emerald-600 text-white' : 'border-slate-700 bg-slate-950 text-slate-400'}`}>
+                      {option.id}
+                    </button>
+                    <input required value={option.text} onChange={(e) => setQuestionEdit({
+                      ...questionEdit,
+                      options: questionEdit.options.map((item, itemIndex) => itemIndex === index ? { ...item, text: e.target.value } : item),
+                    })} className="flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" />
+                  </div>
+                ))}
+              </div>
+            </fieldset>
+          )}
+          <label className="block text-xs font-semibold uppercase text-slate-300">
+            Explanation
+            <input value={questionEdit.explanation || ''} onChange={(e) => setQuestionEdit({ ...questionEdit, explanation: e.target.value })} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" />
+          </label>
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={() => setQuestionModal(null)} className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300">Cancel</button>
+            <button type="submit" className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white"><Save className="mr-1 inline h-4 w-4" />Save question</button>
+          </div>
+        </form>
+      </AdminModal>
     </div>
   );
 }

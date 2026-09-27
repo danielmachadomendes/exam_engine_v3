@@ -7,7 +7,7 @@ router.use(authenticateToken, requireAdmin);
 
 const VALID_USER_ROLES = new Set(['user', 'admin']);
 const VALID_ACCOUNT_STATUSES = new Set(['pending', 'approved', 'rejected']);
-const VALID_QUESTION_TYPES = new Set(['single_choice', 'multiple_choice']);
+const VALID_QUESTION_TYPES = new Set(['single_choice', 'multiple_choice', 'drag_and_drop']);
 const UUID_RE = /^[0-9a-f-]+$/i;
 
 function normalizeText(value) {
@@ -30,6 +30,88 @@ function parseDecimal(value, field, min, max) {
     throw new Error(field + ' must be a number between ' + min + ' and ' + max);
   }
   return parsed;
+}
+
+function parsePagination(query) {
+  const page = query.page === undefined ? 1 : Number(query.page);
+  const pageSize = query.page_size === undefined ? 25 : Number(query.page_size);
+  if (!Number.isSafeInteger(page) || page < 1) {
+    return { error: 'page must be a positive integer' };
+  }
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+    return { error: 'page_size must be an integer between 1 and 100' };
+  }
+  const offset = (page - 1) * pageSize;
+  if (!Number.isSafeInteger(offset)) {
+    return { error: 'page is too large' };
+  }
+  return { page, pageSize, offset };
+}
+
+function validateQuestionContent(type, options, correctAnswers) {
+  if (!VALID_QUESTION_TYPES.has(type)) {
+    return 'type must be either single_choice or multiple_choice';
+  }
+  if (
+    !Array.isArray(options) ||
+    options.length < 2 ||
+    options.length > 8 ||
+    (type === 'drag_and_drop' && options.length % 2 !== 0)
+  ) {
+    if (type === 'drag_and_drop') {
+      return 'drag_and_drop questions must have an even number of answers between two and eight';
+    }
+    return 'options must contain between two and eight answers';
+  }
+  const optionIds = options.map((option) => option && option.id);
+  if (
+    optionIds.some((id) => typeof id !== 'string' || !id.trim()) ||
+    new Set(optionIds).size !== optionIds.length ||
+    options.some((option) => !option || typeof option.text !== 'string' || !option.text.trim())
+  ) {
+    return 'each answer must have a unique id and non-empty text';
+  }
+  if (type === 'drag_and_drop') {
+    const split = options.length / 2;
+    const leftIds = optionIds.slice(0, split);
+    const rightIds = optionIds.slice(split);
+    if (!Array.isArray(correctAnswers) || correctAnswers.length !== split) {
+      return 'drag_and_drop correct_answers must contain one pair for each prompt';
+    }
+    if (
+      correctAnswers.some(
+        (pair) =>
+          !Array.isArray(pair) ||
+          pair.length !== 2 ||
+          !leftIds.includes(pair[0]) ||
+          !rightIds.includes(pair[1])
+      )
+    ) {
+      return 'each correct answer must pair a prompt with a matching answer';
+    }
+    const pairedLeftIds = correctAnswers.map((pair) => pair[0]);
+    const pairedRightIds = correctAnswers.map((pair) => pair[1]);
+    if (
+      new Set(pairedLeftIds).size !== split ||
+      new Set(pairedRightIds).size !== split
+    ) {
+      return 'each prompt and matching answer must be used exactly once';
+    }
+    return null;
+  }
+  if (!Array.isArray(correctAnswers) || correctAnswers.length === 0) {
+    return 'correct_answers must contain at least one answer id';
+  }
+  if (new Set(correctAnswers).size !== correctAnswers.length) {
+    return 'correct_answers cannot contain duplicate answer ids';
+  }
+  if (correctAnswers.some((id) => !optionIds.includes(id))) {
+    return 'correct_answers must refer to existing answer ids';
+  }
+  if (type === 'single_choice' && correctAnswers.length !== 1) {
+    return 'single_choice questions must have exactly one correct answer';
+  }
+  return null;
 }
 
 function isUuid(value) {
@@ -87,7 +169,9 @@ async function validateDomainWeight(examId, candidateWeight, excludeDomainId = n
 }
 
 router.get('/users', async (req, res) => {
-  const { status, role } = req.query;
+  const { status, role, search } = req.query;
+  const pagination = parsePagination(req.query);
+  if (pagination.error) return res.status(400).json({ message: pagination.error });
   const filters = [];
   const values = [];
 
@@ -99,15 +183,31 @@ router.get('/users', async (req, res) => {
     filters.push('role = $' + (filters.length + 1));
     values.push(String(role));
   }
+  if (search) {
+    const placeholder = '$' + (filters.length + 1);
+    filters.push('(full_name ILIKE ' + placeholder + ' OR email ILIKE ' + placeholder + ' OR role::text ILIKE ' + placeholder + ' OR status::text ILIKE ' + placeholder + ')');
+    values.push('%' + String(search).trim() + '%');
+  }
 
   const where = filters.length ? 'WHERE ' + filters.join(' AND ') : '';
 
   try {
+    const countResult = await pool.query('SELECT COUNT(*)::int AS total FROM users ' + where, values);
     const result = await pool.query(
-      'SELECT id, full_name, email, role, status, created_at, updated_at FROM users ' + where + ' ORDER BY created_at DESC',
-      values
+      'SELECT id, full_name, email, role, status, created_at, updated_at FROM users ' + where +
+        ' ORDER BY created_at DESC, id DESC LIMIT $' + (values.length + 1) + ' OFFSET $' + (values.length + 2),
+      [...values, pagination.pageSize, pagination.offset]
     );
-    return res.status(200).json({ users: result.rows });
+    const total = countResult.rows[0].total;
+    return res.status(200).json({
+      users: result.rows,
+      pagination: {
+        page: pagination.page,
+        page_size: pagination.pageSize,
+        total,
+        total_pages: Math.ceil(total / pagination.pageSize),
+      },
+    });
   } catch (error) {
     return mapDbError(res, error, 'Fetch users error');
   }
@@ -491,9 +591,9 @@ router.post('/questions', async (req, res) => {
 
   if (!isUuid(domainId)) return res.status(400).json({ message: 'Invalid domain_id' });
   if (!text) return res.status(400).json({ message: 'question_text cannot be empty' });
-  if (!VALID_QUESTION_TYPES.has(kind)) return res.status(400).json({ message: 'type must be either single_choice or multiple_choice' });
-  if (!Array.isArray(options) || !options.length) return res.status(400).json({ message: 'options must be a non-empty array' });
-  if (!Array.isArray(correct_answers)) return res.status(400).json({ message: 'correct_answers must be an array' });
+  if (!VALID_QUESTION_TYPES.has(kind)) return res.status(400).json({ message: 'type must be single_choice, multiple_choice, or drag_and_drop' });
+  const contentError = validateQuestionContent(kind, options, correct_answers);
+  if (contentError) return res.status(400).json({ message: contentError });
 
   try {
     const domain = await ensureDomainExists(domainId);
@@ -512,6 +612,8 @@ router.post('/questions', async (req, res) => {
 
 router.get('/questions', async (req, res) => {
   const { domain_id, exam_id, search, is_active } = req.query;
+  const pagination = parsePagination(req.query);
+  if (pagination.error) return res.status(400).json({ message: pagination.error });
   const filters = [];
   const values = [];
 
@@ -526,7 +628,9 @@ router.get('/questions', async (req, res) => {
     filters.push('e.id = $' + (filters.length + 1)); values.push(String(exam_id));
   }
   if (search) {
-    filters.push('LOWER(q.question_text) LIKE LOWER($' + (filters.length + 1) + ')'); values.push('%' + String(search).trim() + '%');
+    const placeholder = '$' + (filters.length + 1);
+    filters.push('(q.question_text ILIKE ' + placeholder + ' OR d.name ILIKE ' + placeholder + ' OR e.code ILIKE ' + placeholder + ' OR e.title ILIKE ' + placeholder + ')');
+    values.push('%' + String(search).trim() + '%');
   }
   if (is_active !== undefined) {
     const flag = String(is_active).toLowerCase();
@@ -534,14 +638,27 @@ router.get('/questions', async (req, res) => {
     filters.push('q.is_active = $' + (filters.length + 1)); values.push(flag === 'true');
   }
 
-  if (filters.length) {
-    query += ' WHERE ' + filters.join(' AND ');
-  }
-  query += ' ORDER BY q.created_at DESC';
+  const where = filters.length ? ' WHERE ' + filters.join(' AND ') : '';
+  query += where + ' ORDER BY q.created_at DESC, q.id DESC LIMIT $' + (values.length + 1) +
+    ' OFFSET $' + (values.length + 2);
 
   try {
-    const result = await pool.query(query, values);
-    return res.status(200).json({ questions: result.rows });
+    const countResult = await pool.query(
+      'SELECT COUNT(*)::int AS total FROM questions q JOIN domains d ON d.id = q.domain_id JOIN exams e ON e.id = d.exam_id' +
+        where,
+      values
+    );
+    const result = await pool.query(query, [...values, pagination.pageSize, pagination.offset]);
+    const total = countResult.rows[0].total;
+    return res.status(200).json({
+      questions: result.rows,
+      pagination: {
+        page: pagination.page,
+        page_size: pagination.pageSize,
+        total,
+        total_pages: Math.ceil(total / pagination.pageSize),
+      },
+    });
   } catch (error) {
     return mapDbError(res, error, 'Get questions error');
   }
@@ -573,12 +690,12 @@ router.patch('/questions/:id', async (req, res) => {
 
   if (type !== undefined) {
     const kind = normalizeText(type) || 'single_choice';
-    if (!VALID_QUESTION_TYPES.has(kind)) return res.status(400).json({ message: 'type must be either single_choice or multiple_choice' });
+    if (!VALID_QUESTION_TYPES.has(kind)) return res.status(400).json({ message: 'type must be single_choice, multiple_choice, or drag_and_drop' });
     updates.push('type = $' + (updates.length + 1)); values.push(kind);
   }
 
   if (options !== undefined) {
-    if (!Array.isArray(options) || !options.length) return res.status(400).json({ message: 'options must be a non-empty array' });
+    if (!Array.isArray(options)) return res.status(400).json({ message: 'options must be an array' });
     updates.push('options = $' + (updates.length + 1) + '::jsonb'); values.push(JSON.stringify(options));
   }
 
@@ -603,6 +720,23 @@ router.patch('/questions/:id', async (req, res) => {
   values.push(id);
 
   try {
+    const existingResult = await pool.query(
+      'SELECT type, options, correct_answers FROM questions WHERE id = $1',
+      [id]
+    );
+    if (!existingResult.rows.length) {
+      return res.status(404).json({ message: 'Question not found' });
+    }
+    const existing = existingResult.rows[0];
+    if (type !== undefined || options !== undefined || correct_answers !== undefined) {
+      const contentError = validateQuestionContent(
+        type === undefined ? existing.type : normalizeText(type),
+        options === undefined ? existing.options : options,
+        correct_answers === undefined ? existing.correct_answers : correct_answers
+      );
+      if (contentError) return res.status(400).json({ message: contentError });
+    }
+
     const result = await pool.query(
       'UPDATE questions SET ' + updates.join(', ') + ', updated_at = CURRENT_TIMESTAMP WHERE id = $' + values.length + ' RETURNING *',
       values
@@ -644,6 +778,10 @@ router.post('/questions/bulk', async (req, res) => {
   try {
     await client.query('BEGIN');
     for (const item of questions) {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ message: 'Each question must be an object' });
+      }
       const domainId = String(item.domain_id);
       if (!isUuid(domainId)) {
         await client.query('ROLLBACK');
@@ -667,7 +805,12 @@ router.post('/questions/bulk', async (req, res) => {
       }
       if (!VALID_QUESTION_TYPES.has(kind)) {
         await client.query('ROLLBACK');
-        return res.status(400).json({ message: 'Each question type must be single_choice or multiple_choice' });
+        return res.status(400).json({ message: 'Each question type must be single_choice, multiple_choice, or drag_and_drop' });
+      }
+      const contentError = validateQuestionContent(kind, item.options, item.correct_answers);
+      if (contentError) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ message: contentError });
       }
 
       await client.query(

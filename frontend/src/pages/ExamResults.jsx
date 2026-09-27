@@ -259,45 +259,71 @@ export default function ExamResults() {
                   {q.question_text}
                 </p>
 
-                {/* Options List */}
-                <div className="space-y-2 mb-4">
-                  {q.options.map((opt) => {
-                    const isUserChoice = (q.user_answers || []).includes(opt.id);
-                    const isTargetCorrect = (q.correct_answers || []).includes(opt.id);
-
-                    let badgeColor = 'bg-slate-950/60 border-slate-800 text-slate-300';
-                    if (isTargetCorrect) {
-                      badgeColor = 'bg-emerald-950/40 border-emerald-500/60 text-emerald-200';
-                    } else if (isUserChoice && !isTargetCorrect) {
-                      badgeColor = 'bg-rose-950/40 border-rose-500/60 text-rose-200';
-                    }
-
-                    return (
-                      <div
-                        key={opt.id}
-                        className={`p-3 rounded-xl border text-xs flex items-center justify-between ${badgeColor}`}
-                      >
-                        <div className="flex items-center gap-2.5">
-                          <span className="font-mono font-bold uppercase">{opt.id}.</span>
-                          <span>{opt.text}</span>
+                {q.type === 'drag_and_drop' ? (
+                  <div className="mb-4 space-y-2">
+                    {q.options.slice(0, q.options.length / 2).map((prompt) => {
+                      const userMatchId = (q.user_answers || []).find(
+                        (pair) => Array.isArray(pair) && pair[0] === prompt.id
+                      )?.[1];
+                      const correctMatchId = (q.correct_answers || []).find(
+                        (pair) => Array.isArray(pair) && pair[0] === prompt.id
+                      )?.[1];
+                      const userMatch = q.options.find((option) => option.id === userMatchId);
+                      const correctMatch = q.options.find((option) => option.id === correctMatchId);
+                      const isPairCorrect = Boolean(userMatchId) && userMatchId === correctMatchId;
+                      return (
+                        <div key={prompt.id} className="grid grid-cols-1 gap-2 rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs sm:grid-cols-3 sm:items-center">
+                          <span className="text-slate-200"><strong className="mr-2 font-mono uppercase">{prompt.id}.</strong>{prompt.text}</span>
+                          <span className={isPairCorrect ? 'text-emerald-300' : 'text-rose-300'}>
+                            Your match: {userMatch ? `${userMatch.id.toUpperCase()}. ${userMatch.text}` : 'Not matched'}
+                          </span>
+                          <span className="text-emerald-300">
+                            Correct match: {correctMatch ? `${correctMatch.id.toUpperCase()}. ${correctMatch.text}` : 'Unavailable'}
+                          </span>
                         </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="mb-4 space-y-2">
+                    {q.options.map((opt) => {
+                      const isUserChoice = (q.user_answers || []).includes(opt.id);
+                      const isTargetCorrect = (q.correct_answers || []).includes(opt.id);
 
-                        <div className="flex items-center gap-2 font-mono text-[10px]">
-                          {isUserChoice && (
-                            <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
-                              Your Answer
-                            </span>
-                          )}
-                          {isTargetCorrect && (
-                            <span className="px-2 py-0.5 rounded bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 font-bold">
-                              Correct Key
-                            </span>
-                          )}
+                      let badgeColor = 'bg-slate-950/60 border-slate-800 text-slate-300';
+                      if (isTargetCorrect) {
+                        badgeColor = 'bg-emerald-950/40 border-emerald-500/60 text-emerald-200';
+                      } else if (isUserChoice && !isTargetCorrect) {
+                        badgeColor = 'bg-rose-950/40 border-rose-500/60 text-rose-200';
+                      }
+
+                      return (
+                        <div
+                          key={opt.id}
+                          className={`p-3 rounded-xl border text-xs flex items-center justify-between ${badgeColor}`}
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <span className="font-mono font-bold uppercase">{opt.id}.</span>
+                            <span>{opt.text}</span>
+                          </div>
+
+                          <div className="flex items-center gap-2 font-mono text-[10px]">
+                            {isUserChoice && (
+                              <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                                Your Answer
+                              </span>
+                            )}
+                            {isTargetCorrect && (
+                              <span className="px-2 py-0.5 rounded bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 font-bold">
+                                Correct Key
+                              </span>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+                )}
 
                 {/* Explanation accordion */}
                 {q.explanation && (

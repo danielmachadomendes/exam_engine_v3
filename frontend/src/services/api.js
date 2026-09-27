@@ -39,7 +39,12 @@ export const authApi = {
 };
 
 export const adminApi = {
-  getUsers: () => apiFetch('/admin/users'),
+  getUsers: (params = {}) => {
+    const query = new URLSearchParams(
+      Object.entries(params).filter(([, value]) => value !== undefined && value !== '')
+    ).toString();
+    return apiFetch(`/admin/users${query ? `?${query}` : ''}`);
+  },
   getPendingUsers: () => apiFetch('/admin/users/pending'),
   updateUser: (id, data) =>
     apiFetch(`/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
