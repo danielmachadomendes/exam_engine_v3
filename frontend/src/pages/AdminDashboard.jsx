@@ -1294,7 +1294,10 @@ function QuestionManagerTab({ notify }) {
       setQuestionText('');
       setExplanation('');
     } catch (err) {
-      notify('error', err.message || 'Failed to save question');
+      const message = err.data?.detail
+        ? `${err.message}: ${err.data.detail}`
+        : err.message || 'Failed to save question';
+      notify('error', message);
     }
   };
 
@@ -1347,7 +1350,10 @@ function QuestionManagerTab({ notify }) {
       setQuestionReload((value) => value + 1);
       notify('success', 'Question updated successfully');
     } catch (err) {
-      notify('error', err.message || 'Invalid question JSON or update failed');
+      const message = err.data?.detail
+        ? `${err.message}: ${err.data.detail}`
+        : err.message || 'Invalid question JSON or update failed';
+      notify('error', message);
     }
   };
 
