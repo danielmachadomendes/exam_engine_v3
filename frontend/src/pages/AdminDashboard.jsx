@@ -316,30 +316,14 @@ function UserApprovalsTab({ notify }) {
   };
 
   return (
-    <div>
-      <div className="mb-6">
+    <div className="space-y-8">
+      <div>
         <h2 className="text-2xl font-bold text-white tracking-tight">User Management</h2>
         <p className="text-sm text-slate-400">Review, edit, approve, and remove registered accounts.</p>
       </div>
 
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="relative w-full max-w-xs">
-            <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search users"
-              className="w-full pl-9 pr-3 py-2 bg-slate-900 border border-slate-800 rounded-lg text-sm text-slate-100"
-            />
-          </div>
-          <CsvTools
-            entity="users"
-            notify={notify}
-            onImported={() => setUsersReload((value) => value + 1)}
-            hint="New users need a password; exports leave password blank. Keep IDs to update; blank IDs add rows."
-          />
-        </div>
+      <div className="flex flex-wrap gap-4">
+        <div className="flex flex-wrap gap-2">
         <button
           type="button"
           onClick={() => setCreateUserOpen(true)}
@@ -347,19 +331,41 @@ function UserApprovalsTab({ notify }) {
         >
           <Plus className="h-4 w-4" /> Add user
         </button>
+          <CsvTools
+            entity="users"
+            notify={notify}
+            onImported={() => setUsersReload((value) => value + 1)}
+            hint="New users need a password; exports leave password blank. Keep IDs to update; blank IDs add rows."
+          />
+        </div>
       </div>
 
-      {loading ? (
-        <div className="flex items-center justify-center p-12 text-slate-400">
-          <Loader2 className="w-6 h-6 animate-spin mr-2" /> Loading users...
+      <section className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
+        <div className="p-4 border-b border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-bold text-white">User Table</h3>
+            <p className="text-xs text-slate-400">{pagination.total} registered users</p>
+          </div>
+          <div className="relative max-w-sm w-full">
+            <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search users"
+              aria-label="Search users"
+              className="w-full pl-9 pr-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm text-slate-100"
+            />
+          </div>
         </div>
-      ) : pagination.total === 0 ? (
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-10 text-center text-slate-400">
-          No users found.
-        </div>
-      ) : (
-        <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
-          <table className="w-full text-left text-sm">
+        {loading ? (
+          <div className="flex items-center justify-center p-10 text-slate-400">
+            <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading users...
+          </div>
+        ) : pagination.total === 0 ? (
+          <p className="p-6 text-center text-sm text-slate-500">No users found.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
             <thead className="bg-slate-950/60 text-xs uppercase tracking-wider text-slate-400 border-b border-slate-800">
               <tr>
                 <th className="py-3.5 px-6">Name</th>
@@ -421,8 +427,9 @@ function UserApprovalsTab({ notify }) {
             totalPages={pagination.total_pages}
             onPageChange={setPage}
           />
-        </div>
-      )}
+          </div>
+        )}
+      </section>
       <AdminModal open={Boolean(editingUser)} title="Edit user" onClose={() => setEditingUser(null)}>
         <form onSubmit={saveUser} className="space-y-4">
           <label className="block text-xs font-semibold uppercase text-slate-300">
@@ -496,6 +503,7 @@ function UserApprovalsTab({ notify }) {
 // =========================================================================
 function ExamsManagerTab({ notify }) {
   const [exams, setExams] = useState([]);
+  const [examSearch, setExamSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [editingExamId, setEditingExamId] = useState(null);
   const [examModalOpen, setExamModalOpen] = useState(false);
@@ -576,6 +584,12 @@ function ExamsManagerTab({ notify }) {
       notify('error', err.message || 'Failed to delete exam');
     }
   };
+
+  const visibleExams = exams.filter((exam) =>
+    `${exam.code} ${exam.title} ${exam.description || ''}`
+      .toLowerCase()
+      .includes(examSearch.trim().toLowerCase())
+  );
 
   return (
     <div className="space-y-8">
@@ -678,20 +692,35 @@ function ExamsManagerTab({ notify }) {
       </AdminModal>
 
       {/* Tabela de Exames */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
-        <div className="p-4 border-b border-slate-800">
-          <h3 className="text-lg font-bold text-white">Configured Exams</h3>
+      <section className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
+        <div className="p-4 border-b border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-bold text-white">Configured Exams</h3>
+            <p className="text-xs text-slate-400">{exams.length} exams configured</p>
+          </div>
+          <div className="relative max-w-sm w-full">
+            <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
+            <input
+              value={examSearch}
+              onChange={(e) => setExamSearch(e.target.value)}
+              placeholder="Search exams"
+              aria-label="Search exams"
+              className="w-full pl-9 pr-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm text-slate-100"
+            />
+          </div>
         </div>
         {loading ? (
-          <div className="flex items-center justify-center p-8 text-slate-400">
+          <div className="flex items-center justify-center p-10 text-slate-400">
             <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading exams...
           </div>
-        ) : exams.length === 0 ? (
-          <p className="p-6 text-slate-500 text-center text-sm">No exams configured yet.</p>
+        ) : visibleExams.length === 0 ? (
+          <p className="p-6 text-slate-500 text-center text-sm">
+            {exams.length === 0 ? 'No exams configured yet.' : 'No exams found.'}
+          </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
-              <thead className="bg-slate-950/60 text-xs uppercase tracking-wider text-slate-400">
+              <thead className="bg-slate-950/60 text-xs uppercase tracking-wider text-slate-400 border-b border-slate-800">
                 <tr>
                   <th className="py-3.5 px-4">Code</th>
                   <th className="py-3.5 px-4">Title & Description</th>
@@ -702,8 +731,8 @@ function ExamsManagerTab({ notify }) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/80">
-                {exams.map((exam) => (
-                  <tr key={exam.id} className="hover:bg-slate-950/40">
+                {visibleExams.map((exam) => (
+                  <tr key={exam.id} className="hover:bg-slate-950/40 transition">
                     <td className="py-3.5 px-4 font-mono font-bold text-indigo-300">{exam.code}</td>
                     <td className="py-3.5 px-4">
                       <div>
@@ -737,7 +766,7 @@ function ExamsManagerTab({ notify }) {
             </table>
           </div>
         )}
-      </div>
+      </section>
     </div>
   );
 }
@@ -920,7 +949,7 @@ function DomainsManagerTab({ notify }) {
       </AdminModal>
 
       {/* Tabela de Todos os Domínios */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
+      <section className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
         <div className="p-4 border-b border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h3 className="text-lg font-bold text-white">All Domains</h3>
@@ -932,7 +961,8 @@ function DomainsManagerTab({ notify }) {
             <select
               value={filterExamId}
               onChange={(e) => setFilterExamId(e.target.value)}
-              className="select-custom w-full pl-3 py-2 bg-slate-950/60 border border-slate-700/80 rounded-lg text-sm text-slate-100 cursor-pointer"
+              aria-label="Filter domains by exam"
+              className="select-custom w-full pl-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm text-slate-100 cursor-pointer"
             >
               <option value="ALL">All Exams</option>
               {exams.map((ex) => (
@@ -948,14 +978,15 @@ function DomainsManagerTab({ notify }) {
                 value={domainSearch}
                 onChange={(e) => setDomainSearch(e.target.value)}
                 placeholder="Search domains..."
-                className="w-full pl-9 pr-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-slate-100"
+                aria-label="Search domains"
+                className="w-full pl-9 pr-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm text-slate-100"
               />
             </div>
           </div>
         </div>
 
         {loading ? (
-          <div className="flex items-center justify-center p-8 text-slate-400">
+          <div className="flex items-center justify-center p-10 text-slate-400">
             <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading domains...
           </div>
         ) : visibleDomains.length === 0 ? (
@@ -963,7 +994,7 @@ function DomainsManagerTab({ notify }) {
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
-              <thead className="bg-slate-950/60 text-xs uppercase tracking-wider text-slate-400">
+              <thead className="bg-slate-950/60 text-xs uppercase tracking-wider text-slate-400 border-b border-slate-800">
                 <tr>
                   <th className="py-3.5 px-4">Exam</th>
                   <th className="py-3.5 px-4">Domain Name</th>
@@ -973,7 +1004,7 @@ function DomainsManagerTab({ notify }) {
               </thead>
               <tbody className="divide-y divide-slate-800/80">
                 {visibleDomains.map((domain) => (
-                  <tr key={domain.id} className="hover:bg-slate-950/40">
+                  <tr key={domain.id} className="hover:bg-slate-950/40 transition">
                     <td className="py-3.5 px-4 font-mono font-semibold text-indigo-300 whitespace-nowrap">
                       {domain.exam_code} - {domain.exam_title}
                     </td>
@@ -998,7 +1029,7 @@ function DomainsManagerTab({ notify }) {
             </table>
           </div>
         )}
-      </div>
+      </section>
     </div>
   );
 }
@@ -1322,13 +1353,11 @@ function QuestionManagerTab({ notify }) {
     <div className="space-y-8">
       <div>
         <h2 className="text-2xl font-bold text-white tracking-tight">Question Management</h2>
-        <p className="text-sm text-slate-400">
-          Create single exam questions or bulk-import formatted CSV files.
-        </p>
+        <p className="text-sm text-slate-400">Create single exam questions or bulk-import formatted CSV files.</p>
       </div>
         
       <div className="flex flex-wrap gap-2">
-        <button onClick={() => setQuestionModal('create')} disabled={!selectedDomainId} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
+        <button onClick={() => setQuestionModal('create')} disabled={exams.length === 0} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
           <Plus className="h-4 w-4" /> Add question
         </button>
         <CsvTools entity="questions" notify={notify} onImported={() => setQuestionReload((value) => value + 1)} />
@@ -1342,42 +1371,6 @@ function QuestionManagerTab({ notify }) {
         </button> */}
       </div>
 
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-900 border border-slate-800 p-4 rounded-xl">
-        <div>
-          <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">Target Exam</label>
-          <select
-            value={selectedExamId}
-            onChange={(e) => handleExamChange(e.target.value)}
-            className="select-custom w-full pl-3 py-2 bg-slate-950/60 border border-slate-700/80 rounded-lg text-sm text-slate-100 cursor-pointer"
-          >
-            {exams.map((ex) => (
-              <option key={ex.id} value={ex.id}>
-                {ex.code} - {ex.title}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">Exam Domain</label>
-          <select
-            value={selectedDomainId}
-            onChange={(e) => setSelectedDomainId(e.target.value)}
-            className="select-custom w-full pl-3 py-2 bg-slate-950/60 border border-slate-700/80 rounded-lg text-sm text-slate-100 cursor-pointer"
-          >
-            {activeDomains.length === 0 ? (
-              <option value="">No domains found for this exam</option>
-            ) : (
-              activeDomains.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name} ({d.weight_percentage}%)
-                </option>
-              ))
-            )}
-          </select>
-        </div>
-      </div>
 
       <section className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
         <div className="p-4 border-b border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-3">
@@ -1460,7 +1453,43 @@ function QuestionManagerTab({ notify }) {
             <label className="block text-xs font-semibold uppercase text-slate-300 mb-2">Question prompt</label>
             <textarea required rows={3} value={questionText} onChange={(e) => setQuestionText(e.target.value)} className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" />
           </div>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <label className="block text-xs font-semibold uppercase text-slate-300">
+              Target Exam
+              <select
+                required
+                value={selectedExamId}
+                onChange={(e) => handleExamChange(e.target.value)}
+                className="select-custom mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+              >
+                <option value="">Select an exam</option>
+                {exams.map((exam) => (
+                  <option key={exam.id} value={exam.id}>
+                    {exam.code} - {exam.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block text-xs font-semibold uppercase text-slate-300">
+              Exam Domain
+              <select
+                required
+                value={selectedDomainId}
+                onChange={(e) => setSelectedDomainId(e.target.value)}
+                className="select-custom mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+              >
+                <option value="">
+                  {activeDomains.length === 0 ? 'No domains found for this exam' : 'Select a domain'}
+                </option>
+                {activeDomains.map((domain) => (
+                  <option key={domain.id} value={domain.id}>
+                    {domain.name} ({domain.weight_percentage}%)
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <label className="block text-xs font-semibold uppercase text-slate-300">
               Question type
               <select value={questionType} onChange={(e) => handleQuestionTypeChange(e.target.value)} className="select-custom mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100">
