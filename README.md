@@ -448,8 +448,13 @@ The health endpoint verifies that the Express server can reach PostgreSQL.
 
 ## Future improvements
 
-- Add a dedicated public active-exams endpoint for non-admin dashboards.
-- Add automated API and end-to-end tests.
+- Create an order key for the exams so that we can order them in the User dashboard.
+- Add a flag for correction of a wrong question or wrong answer.
+- Allow for the users to review the exam attempts after closing them (clicable attempt).
+- Add audit logging for administrative edits and deletions!
+- Review and refine UX/UI for the whole application!
+- Add a user board/forum for discussion and moderation of questions and exams!
 - Add password reset and administrator password-change flows.
-- Consider archive/deactivation workflows where historical attempts must never be deleted.
-- Add audit logging for administrative edits and deletions.
+- Add a dedicated public active-exams endpoint for non-admin dashboards?
+- Add automated API and end-to-end tests?
+- Consider archive/deactivation workflows where historical attempts must never be deleted?
