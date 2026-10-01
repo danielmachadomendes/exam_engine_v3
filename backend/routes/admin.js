@@ -1084,8 +1084,15 @@ router.post('/exams/import', async (req, res) => handleCsvImport(
           'UPDATE exams SET code = $1, title = $2, description = $3, duration_minutes = $4, total_questions = $5, passing_score_percentage = $6, is_active = $7, updated_at = CURRENT_TIMESTAMP WHERE id = $8 RETURNING id',
           [...values, recordId]
         );
-        if (!result.rows.length) csvRowError(row, 'exam id was not found', 404);
-        updated += 1;
+        if (result.rows.length) {
+          updated += 1;
+        } else {
+          await client.query(
+            'INSERT INTO exams (id, code, title, description, duration_minutes, total_questions, passing_score_percentage, is_active) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+            [recordId, ...values]
+          );
+          created += 1;
+        }
       } else {
         await client.query(
           'INSERT INTO exams (code, title, description, duration_minutes, total_questions, passing_score_percentage, is_active) VALUES ($1, $2, $3, $4, $5, $6, $7)',
@@ -1154,14 +1161,13 @@ router.post('/domains/import', async (req, res) => handleCsvImport(
         csvRowError(row, 'weight_percentage can have at most two decimal places');
       }
       const existing = recordId ? domainsById.get(recordId) : null;
-      if (recordId && !existing) csvRowError(row, 'domain id was not found', 404);
       if (existing) {
         totalsByExam.set(existing.exam_id, totalsByExam.get(existing.exam_id) - existing.weight);
         affectedExams.set(existing.exam_id, row);
       }
       totalsByExam.set(exam.id, (totalsByExam.get(exam.id) || 0) + weight);
       affectedExams.set(exam.id, row);
-      prepared.push({ row, id: recordId, exam_id: exam.id, name: cleanName, weight });
+      prepared.push({ row, id: recordId, isExisting: Boolean(existing), exam_id: exam.id, name: cleanName, weight });
     }
 
     for (const [examId, row] of affectedExams) {
@@ -1175,12 +1181,18 @@ router.post('/domains/import', async (req, res) => handleCsvImport(
     let created = 0;
     let updated = 0;
     for (const item of prepared) {
-      if (item.id) {
+      if (item.isExisting) {
         await client.query(
           'UPDATE domains SET exam_id = $1, name = $2, weight_percentage = $3 WHERE id = $4',
           [item.exam_id, item.name, item.weight, item.id]
         );
         updated += 1;
+      } else if (item.id) {
+        await client.query(
+          'INSERT INTO domains (id, exam_id, name, weight_percentage) VALUES ($1, $2, $3, $4)',
+          [item.id, item.exam_id, item.name, item.weight]
+        );
+        created += 1;
       } else {
         await client.query(
           'INSERT INTO domains (exam_id, name, weight_percentage) VALUES ($1, $2, $3)',
@@ -1287,8 +1299,15 @@ router.post('/questions/import', async (req, res) => handleCsvImport(
           'UPDATE questions SET domain_id = $1, question_text = $2, type = $3, options = $4::jsonb, correct_answers = $5::jsonb, explanation = $6, is_active = $7, updated_at = CURRENT_TIMESTAMP WHERE id = $8 RETURNING id',
           [...values, recordId]
         );
-        if (!result.rows.length) csvRowError(row, 'question id was not found', 404);
-        updated += 1;
+        if (result.rows.length) {
+          updated += 1;
+        } else {
+          await client.query(
+            'INSERT INTO questions (id, domain_id, question_text, type, options, correct_answers, explanation, is_active) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8)',
+            [recordId, ...values]
+          );
+          created += 1;
+        }
       } else {
         await client.query(
           'INSERT INTO questions (domain_id, question_text, type, options, correct_answers, explanation, is_active) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7)',

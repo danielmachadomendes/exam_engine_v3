@@ -317,7 +317,7 @@ All administrator endpoints require an approved JWT whose role is `admin`.
 | `GET` | `/admin/questions/export` | Export all questions as CSV |
 | `POST` | `/admin/questions/import` | Create or update questions from CSV |
 
-The admin dashboard can export and import CSV files in the Users, Exams, Domains, and Questions tabs. Exported files can be edited in a spreadsheet and uploaded again. Keep the `id` column to update a record; leave it blank to insert a new one. Omitted rows are not deleted. Each CSV import is atomic, reports validation errors by row, and accepts up to 5,000 rows and 10 MB. User CSV files include a `password` column that is blank on export; supply a password for each new user, and leave it blank to retain an existing user's password.
+The admin dashboard can export and import CSV files in the Users, Exams, Domains, and Questions tabs. Exported files can be edited in a spreadsheet and uploaded again. For Exams, Domains, and Questions, provide an `id` to update that record or create a new record with that ID if it does not exist; leave it blank to generate a new ID. Omitted rows are not deleted. Each CSV import is atomic, reports validation errors by row, and accepts up to 5,000 rows and 10 MB. User CSV files include a `password` column that is blank on export; supply a password for each new user, and leave it blank to retain an existing user's password.
 
 Import in dependency order: exams, then domains, then questions.
 
