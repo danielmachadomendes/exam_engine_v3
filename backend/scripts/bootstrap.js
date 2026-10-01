@@ -3,73 +3,80 @@ const { Client } = require('pg');
 const fs = require('fs');
 const path = require('path');
 
-// A tua base de dados alvo
-const dbName = process.env.DB_NAME || 'exam_engine';
+async function getClient() {
+  const connectionString = process.env.DATABASE_URL;
 
-// 1. Configuração base (ligação obrigatória à BD padrão 'postgres' para tarefas administrativas)
-const baseConfig = {
-  user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASSWORD,
-  host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 5432,
-  database: 'postgres', 
-};
+  if (connectionString) {
+    return new Client({
+      connectionString,
+      ssl: connectionString.includes('sslmode=') || process.env.NODE_ENV === 'production'
+        ? { rejectUnauthorized: false }
+        : false,
+    });
+  }
+
+  // Fallback para desenvolvimento local caso não haja DATABASE_URL
+  return new Client({
+    user: process.env.DB_USER || 'postgres',
+    password: process.env.DB_PASSWORD,
+    host: process.env.DB_HOST || 'localhost',
+    port: process.env.DB_PORT || 5432,
+    database: process.env.DB_NAME || 'exam_engine',
+  });
+}
+
+async function runSqlFile(client, filePath) {
+  const fileName = path.basename(filePath);
+  console.log(`📄 A executar: ${fileName}...`);
+  const sql = fs.readFileSync(filePath, 'utf8');
+  await client.query(sql);
+  console.log(`✅ ${fileName} executado com sucesso!`);
+}
 
 async function bootstrap() {
-  if (!baseConfig.password) {
-    throw new Error('DB_PASSWORD is required to run the database bootstrap script.');
-  }
+  const client = await getClient();
 
-  if (dbName.length > 63 || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(dbName)) {
-    throw new Error('DB_NAME must be at most 63 characters and contain only letters, numbers, and underscores, without starting with a number.');
-  }
-
-  const client = new Client(baseConfig);
-  
   try {
     await client.connect();
-    console.log('🔌 Ligação estabelecida à matriz do PostgreSQL.');
+    console.log('⚡ Ligado à base de dados com sucesso.');
 
-    // Verifica se a base de dados do projeto já existe
-    const res = await client.query('SELECT 1 FROM pg_database WHERE datname = $1', [dbName]);
-    
-    if (res.rowCount === 0) {
-      console.log(`🌱 A base de dados "${dbName}" não existe. A criar...`);
-      await client.query(`CREATE DATABASE "${dbName}"`);
-      console.log(`✅ Base de dados "${dbName}" criada com muito estilo!`);
-    } else {
-      console.log(`🌊 A base de dados "${dbName}" já flui perfeitamente. Continuando...`);
+    // 1. Executa o schema base
+    // Verifica se está dentro de scripts/ ou na raiz
+    let baseSqlPath = path.join(__dirname, 'database.sql');
+    if (!fs.existsSync(baseSqlPath)) {
+      baseSqlPath = path.join(__dirname, '..', 'database.sql');
     }
+
+    if (fs.existsSync(baseSqlPath)) {
+      await runSqlFile(client, baseSqlPath);
+    } else {
+      console.warn('⚠️  database.sql não encontrado.');
+    }
+
+    // 2. Executa as migrações em ordem alfabética/cronológica
+    const migrationsDir = path.join(__dirname, 'migrations');
+    if (fs.existsSync(migrationsDir)) {
+      const migrationFiles = fs
+        .readdirSync(migrationsDir)
+        .filter((file) => file.endsWith('.sql'))
+        .sort();
+
+      for (const file of migrationFiles) {
+        const fullPath = path.join(migrationsDir, file);
+        await runSqlFile(client, fullPath);
+      }
+    }
+
+    console.log('✨ Poesia pura: Estrutura e migrações aplicadas com maestria!');
   } catch (err) {
-    console.error('❌ Erro a verificar ou criar a BD:', err);
+    console.error('❌ Erro durante o bootstrap da base de dados:', err);
     process.exit(1);
   } finally {
     await client.end();
   }
-
-  // 2. Agora, ligamos diretamente à BD do projeto para injetar o schema
-  const targetConfig = { ...baseConfig, database: dbName };
-  const targetClient = new Client(targetConfig);
-
-  try {
-    await targetClient.connect();
-    console.log(`📦 Ligados à "${dbName}". A ler o teu database.sql...`);
-
-    // Aponta para o ficheiro SQL raiz que tens no projeto
-    const sqlPath = path.join(__dirname, '..', 'database.sql');
-    const sql = fs.readFileSync(sqlPath, 'utf8');
-
-    await targetClient.query(sql);
-    console.log('✨ Poesia pura: Tabelas e estrutura inicializadas com sucesso!');
-  } catch (err) {
-    console.error('❌ Erro a processar o database.sql:', err);
-    process.exit(1);
-  } finally {
-    await targetClient.end();
-  }
 }
 
 bootstrap().catch((error) => {
-  console.error('❌ Erro ao inicializar a base de dados:', error.message);
+  console.error('❌ Erro fatal:', error.message);
   process.exitCode = 1;
 });
