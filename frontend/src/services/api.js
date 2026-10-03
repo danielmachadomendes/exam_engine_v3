@@ -96,6 +96,12 @@ export const adminApi = {
   updateQuestion: (id, data) =>
     apiFetch(`/admin/questions/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteQuestion: (id) => apiFetch(`/admin/questions/${id}`, { method: 'DELETE' }),
+  getQuestionIssues: () => apiFetch('/admin/question-issues'),
+  updateQuestionIssue: (id, status) =>
+    apiFetch(`/admin/question-issues/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    }),
 };
 
 export const examApi = {
@@ -104,5 +110,11 @@ export const examApi = {
     apiFetch(`/exams/${examId}/submit`, {
       method: 'POST',
       body: JSON.stringify(payload),
+    }),
+  getAttemptReview: (attemptId) => apiFetch(`/exams/attempts/${attemptId}/review`),
+  reportQuestionIssue: (attemptId, questionId, description) =>
+    apiFetch(`/exams/attempts/${attemptId}/questions/${questionId}/issues`, {
+      method: 'POST',
+      body: JSON.stringify({ description }),
     }),
 };

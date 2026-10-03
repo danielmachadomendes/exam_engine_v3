@@ -21,6 +21,7 @@ import {
   Search,
   BookOpen,
   Download,
+  Flag,
 } from 'lucide-react';
 
 const TABLE_ACTION_BUTTON_CLASS =
@@ -28,7 +29,7 @@ const TABLE_ACTION_BUTTON_CLASS =
 
 export default function AdminDashboard() {
   const { user, logout } = useAuth();
-  const [activeTab, setActiveTab] = useState('users'); // 'users' | 'exams' | 'domains' | 'questions'
+  const [activeTab, setActiveTab] = useState('users'); // 'users' | 'exams' | 'domains' | 'questions' | 'issues'
 
   // Feedback global
   const [notification, setNotification] = useState(null);
@@ -94,6 +95,17 @@ export default function AdminDashboard() {
             >
               <FileQuestion className="w-4 h-4" /> Questions
             </button>
+
+            <button
+              onClick={() => setActiveTab('issues')}
+              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium transition ${
+                activeTab === 'issues'
+                  ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+              }`}
+            >
+              <Flag className="w-4 h-4" /> Reported issues
+            </button>
           </nav>
         </div>
 
@@ -128,6 +140,7 @@ export default function AdminDashboard() {
         {activeTab === 'exams' && <ExamsManagerTab notify={showNotification} />}
         {activeTab === 'domains' && <DomainsManagerTab notify={showNotification} />}
         {activeTab === 'questions' && <QuestionManagerTab notify={showNotification} />}
+        {activeTab === 'issues' && <QuestionIssuesTab notify={showNotification} />}
       </main>
     </div>
   );
@@ -516,6 +529,7 @@ function ExamsManagerTab({ notify }) {
     code: '',
     title: '',
     description: '',
+    display_order: 0,
     duration_minutes: 90,
     total_questions: 60,
     passing_score_pct: 70.0,
@@ -572,6 +586,7 @@ function ExamsManagerTab({ notify }) {
       code: exam.code,
       title: exam.title,
       description: exam.description || '',
+      display_order: exam.display_order,
       duration_minutes: exam.duration_minutes,
       total_questions: exam.total_questions,
       passing_score_pct: exam.passing_score_percentage,
@@ -619,6 +634,19 @@ function ExamsManagerTab({ notify }) {
       >
         <form onSubmit={handleCreateExam} className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">Dashboard order</label>
+              <input
+                type="number"
+                min="0"
+                max="1000000"
+                step="1"
+                required
+                value={examForm.display_order}
+                onChange={(e) => setExamForm({ ...examForm, display_order: e.target.value })}
+                className="w-full px-3 py-2 bg-slate-950/60 border border-slate-700/80 rounded-lg text-sm text-slate-100"
+              />
+            </div>
             <div>
               <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">Code</label>
               <input
@@ -728,6 +756,7 @@ function ExamsManagerTab({ notify }) {
               <thead className="bg-slate-950/60 text-xs uppercase tracking-wider text-slate-400 border-b border-slate-800">
                 <tr>
                   <th className="py-3.5 px-4">Code</th>
+                  <th className="py-3.5 px-4">Order</th>
                   <th className="py-3.5 px-4">Title & Description</th>
                   <th className="py-3.5 px-4">Duration</th>
                   <th className="py-3.5 px-4">Questions</th>
@@ -739,6 +768,7 @@ function ExamsManagerTab({ notify }) {
                 {visibleExams.map((exam) => (
                   <tr key={exam.id} className="hover:bg-slate-950/40 transition">
                     <td className="py-3.5 px-4 font-mono font-bold text-indigo-300">{exam.code}</td>
+                    <td className="py-3.5 px-4 text-slate-300">{exam.display_order}</td>
                     <td className="py-3.5 px-4">
                       <div>
                         <div className="text-white font-medium">{exam.title}</div>
@@ -1730,5 +1760,105 @@ function QuestionManagerTab({ notify }) {
         </form>
       </AdminModal>
     </div>
+  );
+}
+
+function QuestionIssuesTab({ notify }) {
+  const [reports, setReports] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchReports = async () => {
+    try {
+      const data = await adminApi.getQuestionIssues();
+      setReports(data.reports || []);
+    } catch (error) {
+      notify('error', error.message || 'Failed to load reported issues');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchReports();
+  }, []);
+
+  const updateStatus = async (report, status) => {
+    try {
+      await adminApi.updateQuestionIssue(report.id, status);
+      setReports((current) =>
+        current.map((item) =>
+          item.id === report.id
+            ? { ...item, status, resolved_at: status === 'resolved' ? new Date().toISOString() : null }
+            : item
+        )
+      );
+      notify('success', status === 'resolved' ? 'Issue marked resolved' : 'Issue reopened');
+    } catch (error) {
+      notify('error', error.message || 'Failed to update issue status');
+    }
+  };
+
+  return (
+    <section className="space-y-6">
+      <div>
+        <h2 className="text-2xl font-bold text-white tracking-tight">Reported question issues</h2>
+        <p className="text-sm text-slate-400">Review candidate feedback and track corrections.</p>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center gap-2 p-8 text-sm text-slate-400">
+          <Loader2 className="h-4 w-4 animate-spin" /> Loading reports...
+        </div>
+      ) : reports.length === 0 ? (
+        <p className="rounded-xl border border-slate-800 bg-slate-900 p-8 text-center text-sm text-slate-400">
+          No question issues have been reported.
+        </p>
+      ) : (
+        <div className="space-y-4">
+          {reports.map((report) => (
+            <article key={report.id} className="rounded-xl border border-slate-800 bg-slate-900 p-5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-white">
+                    {report.exam_code} - {report.exam_title}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-400">
+                    Reported by {report.user_name} ({report.user_email}) · {new Date(report.created_at).toLocaleString()}
+                  </p>
+                </div>
+                <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                  report.status === 'open'
+                    ? 'bg-amber-500/10 text-amber-300'
+                    : 'bg-emerald-500/10 text-emerald-300'
+                }`}>
+                  {report.status}
+                </span>
+              </div>
+              <div className="mt-4 rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Question</p>
+                <p className="mt-1 whitespace-pre-wrap text-sm text-slate-200">{report.question_text}</p>
+              </div>
+              <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/5 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-amber-300">Issue reported</p>
+                <p className="mt-1 whitespace-pre-wrap text-sm text-slate-200">{report.issue_description}</p>
+              </div>
+              <div className="mt-4 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => updateStatus(report, report.status === 'open' ? 'resolved' : 'open')}
+                  className={`${TABLE_ACTION_BUTTON_CLASS} ${
+                    report.status === 'open'
+                      ? 'border-emerald-500/20 bg-emerald-600/10 text-emerald-300 hover:bg-emerald-600 hover:text-white'
+                      : 'border-amber-500/20 bg-amber-600/10 text-amber-300 hover:bg-amber-600 hover:text-white'
+                  }`}
+                >
+                  {report.status === 'open' ? 'Mark resolved' : 'Reopen'}
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }

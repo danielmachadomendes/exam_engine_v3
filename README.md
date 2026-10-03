@@ -44,8 +44,9 @@ exam_engine_v3/
 │   ├── middleware/
 │   │   └── auth.js          # JWT and administrator authorization
 │   ├── migrations/
-│   │   ├── 20260927_add_drag_and_drop_question_type.sql
-│   │   └── 20260928_add_multiple_choice_question_type.sql
+│   │       ├── 20260927_add_drag_and_drop_question_type.sql
+│   │       ├── 20260928_add_multiple_choice_question_type.sql
+│   │       └── 20261003_add_exam_order_review_and_issue_reports.sql
 │   ├── routes/
 │   │   ├── auth.js          # Registration and login
 │   │   ├── users.js         # Authenticated user profile
@@ -81,10 +82,11 @@ exams
 | Table | Purpose |
 | --- | --- |
 | `users` | Registered users, roles, approval status, and authentication data |
-| `exams` | Exam configuration, duration, question quota, passing score, and active status |
+| `exams` | Exam configuration, dashboard display order, duration, question quota, passing score, and active status |
 | `domains` | Weighted syllabus areas belonging to an exam |
 | `questions` | Choice and matching questions belonging to a domain |
-| `exam_attempts` | User exam sessions, submitted answers, scores, and domain results |
+| `exam_attempts` | User exam sessions, submitted answers, scores, domain results, and review snapshots |
+| `question_issue_reports` | Candidate reports about incorrect questions or answers, with administrator tracking |
 
 Domains use `weight_percentage` to distribute questions during an exam. Questions store their options and correct answers as JSONB.
 Questions support `single_choice`, `multiple_choice`, and `drag_and_drop` types. Questions have between two and fourteen answer options. Single-choice questions must identify exactly one correct option. Drag-and-drop questions use an even number of options split into prompt and match columns, so they contain 1–7 pairs. `correct_answers` stores each pair as `[prompt_id, match_id]`, for example `[["a", "h"], ["b", "i"], ["c", "j"], ["d", "k"], ["e", "l"], ["f", "m"], ["g", "n"]]`. Every prompt and every match must appear exactly once.
@@ -94,9 +96,11 @@ For an existing database, apply the question-type migrations before deploying th
 ```powershell
 psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\20260927_add_drag_and_drop_question_type.sql
 psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\20260928_add_multiple_choice_question_type.sql
+psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f backend\migrations\20261003_add_exam_order_review_and_issue_reports.sql
 ```
 
 New installations include all question types in `backend/database.sql`. The migrations use `IF NOT EXISTS`, so they are safe to apply when the enum labels are already present.
+The exam ordering and issue-report migration adds an integer dashboard order key; exams are shown by that key and then title. Completed attempts can be reviewed from the user dashboard, and submitted issue reports appear in the administrator dashboard.
 
 The admin user and question listing endpoints accept `search`, `page`, and `page_size` query parameters (in addition to their existing filters). `page` defaults to `1`, `page_size` defaults to `25` and is capped at `100`. Responses include a `pagination` object with `page`, `page_size`, `total`, and `total_pages`.
 

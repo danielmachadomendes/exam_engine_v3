@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
-import { useLocation, useNavigate, Link } from 'react-router-dom';
+import React, { useEffect, useState } from 'react';
+import { useLocation, useNavigate, Link, useParams } from 'react-router-dom';
+import { examApi } from '../services/api';
 import {
   CheckCircle2,
   XCircle,
@@ -9,23 +10,70 @@ import {
   ChevronUp,
   Filter,
   Check,
-  X
+  X,
+  Flag,
+  Loader2,
 } from 'lucide-react';
 
 export default function ExamResults() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { id: attemptId } = useParams();
 
-  // Recebe o payload devolvido pelo endpoint POST /api/exams/:id/submit
-  const resultsData = location.state?.resultsPayload;
+  const [resultsData, setResultsData] = useState(location.state?.resultsPayload || null);
+  const [loading, setLoading] = useState(!location.state?.resultsPayload);
+  const [loadError, setLoadError] = useState('');
   const [filterMode, setFilterMode] = useState('all'); // 'all' | 'incorrect' | 'correct'
   const [expandedExplanations, setExpandedExplanations] = useState({});
+  const [issueForms, setIssueForms] = useState({});
+  const [reportedQuestions, setReportedQuestions] = useState({});
+  const [issueErrors, setIssueErrors] = useState({});
+
+  useEffect(() => {
+    if (resultsData) return;
+    let cancelled = false;
+    examApi.getAttemptReview(attemptId)
+      .then((data) => {
+        if (!cancelled) setResultsData(data);
+      })
+      .catch((error) => {
+        if (!cancelled) setLoadError(error.message || 'Failed to load exam review');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [attemptId, resultsData]);
+
+  const submitIssueReport = async (questionId) => {
+    const description = (issueForms[questionId] || '').trim();
+    setIssueErrors((previous) => ({ ...previous, [questionId]: '' }));
+    try {
+      await examApi.reportQuestionIssue(attemptId, questionId, description);
+      setReportedQuestions((previous) => ({ ...previous, [questionId]: true }));
+    } catch (error) {
+      setIssueErrors((previous) => ({
+        ...previous,
+        [questionId]: error.message || 'Failed to report this issue',
+      }));
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-300">
+        <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading exam review...
+      </div>
+    );
+  }
 
   if (!resultsData || !resultsData.attempt) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-slate-100">
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 max-w-md w-full text-center">
-          <p className="text-sm text-slate-400 mb-6">No exam result data found.</p>
+          <p className="text-sm text-slate-400 mb-6">{loadError || 'No exam result data found.'}</p>
           <button
             onClick={() => navigate('/dashboard')}
             className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 rounded-xl text-sm font-semibold text-white transition"
@@ -71,6 +119,7 @@ export default function ExamResults() {
             <ArrowLeft className="w-4 h-4" /> Return to Dashboard
           </Link>
           <span className="text-xs font-mono text-slate-500">
+            {attempt.exam_code && `${attempt.exam_code} - ${attempt.exam_title} · `}
             Attempt ID: {attempt.id.substring(0, 8)}...
           </span>
         </div>
@@ -349,6 +398,65 @@ export default function ExamResults() {
                     )}
                   </div>
                 )}
+
+                <div className="mt-4 border-t border-slate-800/80 pt-3">
+                  {reportedQuestions[q.question_id] ? (
+                    <p className="inline-flex items-center gap-2 text-xs font-semibold text-emerald-300">
+                      <CheckCircle2 className="h-4 w-4" /> Issue reported. Thank you for the feedback.
+                    </p>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setIssueForms((previous) => ({
+                          ...previous,
+                          [q.question_id]: previous[q.question_id] === undefined ? '' : previous[q.question_id],
+                        }))}
+                        className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-300 hover:text-amber-200"
+                      >
+                        <Flag className="h-3.5 w-3.5" />
+                        {issueForms[q.question_id] === undefined
+                          ? 'Report an issue with this question or answer'
+                          : 'Issue report'}
+                      </button>
+                      {issueForms[q.question_id] !== undefined && (
+                        <form
+                          className="mt-3 space-y-2"
+                          onSubmit={(event) => {
+                            event.preventDefault();
+                            submitIssueReport(q.question_id);
+                          }}
+                        >
+                          <label className="block text-xs text-slate-300">
+                            Tell us what should be corrected
+                            <textarea
+                              required
+                              maxLength={2000}
+                              rows={3}
+                              value={issueForms[q.question_id]}
+                              onChange={(event) => setIssueForms((previous) => ({
+                                ...previous,
+                                [q.question_id]: event.target.value,
+                              }))}
+                              className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 p-3 text-sm text-slate-100"
+                              placeholder="Describe the incorrect question, answer, or explanation..."
+                            />
+                          </label>
+                          {issueErrors[q.question_id] && (
+                            <p role="alert" className="text-xs text-rose-300">{issueErrors[q.question_id]}</p>
+                          )}
+                          <button
+                            type="submit"
+                            disabled={!issueForms[q.question_id].trim()}
+                            className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-semibold text-white hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Submit report
+                          </button>
+                        </form>
+                      )}
+                    </>
+                  )}
+                </div>
               </div>
             ))}
           </div>

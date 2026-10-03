@@ -197,7 +197,18 @@ export default function UserDashboard() {
                   {profile.attempts.map((attempt) => (
                     <tr key={attempt.attempt_id} className="hover:bg-slate-850/40 transition">
                       <td className="py-3.5 px-6 font-semibold text-white">
-                        {attempt.exam_code} - {attempt.exam_title}
+                        {attempt.status === 'completed' ? (
+                          <button
+                            type="button"
+                            onClick={() => navigate(`/exam/${attempt.attempt_id}/results`)}
+                            className="text-left hover:text-indigo-300 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 rounded"
+                          >
+                            {attempt.exam_code} - {attempt.exam_title}
+                            <span className="ml-2 text-[10px] font-medium text-indigo-300">Review</span>
+                          </button>
+                        ) : (
+                          `${attempt.exam_code} - ${attempt.exam_title}`
+                        )}
                       </td>
                       <td className="py-3.5 px-6 font-mono text-slate-300">
                         {attempt.status}

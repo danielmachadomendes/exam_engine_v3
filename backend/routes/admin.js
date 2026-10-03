@@ -544,6 +544,7 @@ router.post('/exams', async (req, res) => {
   const {
     code,
     title,
+    display_order = 0,
     description,
     duration_minutes = 90,
     total_questions = 60,
@@ -562,10 +563,11 @@ router.post('/exams', async (req, res) => {
     const duration = parseInteger(duration_minutes, 'duration_minutes', 1, 10000);
     const total = parseInteger(total_questions, 'total_questions', 1, 10000);
     const passingScore = parseDecimal(passing_score_pct, 'passing_score_pct', 0, 100);
+    const displayOrder = parseInteger(display_order, 'display_order', 0, 1000000);
 
     const result = await pool.query(
-      'INSERT INTO exams (code, title, description, duration_minutes, total_questions, passing_score_percentage, is_active) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
-      [cleanCode.trim().toUpperCase(), cleanTitle.trim(), normalizeText(description) || null, duration, total, passingScore, Boolean(is_active)]
+      'INSERT INTO exams (code, title, display_order, description, duration_minutes, total_questions, passing_score_percentage, is_active) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
+      [cleanCode.trim().toUpperCase(), cleanTitle.trim(), displayOrder, normalizeText(description) || null, duration, total, passingScore, Boolean(is_active)]
     );
 
     return res.status(201).json({ message: 'Exam created successfully', exam: result.rows[0] });
@@ -583,7 +585,7 @@ router.post('/exams', async (req, res) => {
 router.get('/exams', async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT e.id, e.code, e.title, e.description, e.duration_minutes, e.total_questions, e.passing_score_percentage, e.is_active, e.created_at, e.updated_at, COALESCE((SELECT COUNT(*) FROM domains d WHERE d.exam_id = e.id), 0) AS domain_count, COALESCE((SELECT COUNT(*) FROM questions q JOIN domains d2 ON d2.id = q.domain_id WHERE d2.exam_id = e.id), 0) AS question_count, COALESCE(json_agg(json_build_object(\'id\', d.id, \'name\', d.name, \'weight_percentage\', d.weight_percentage, \'created_at\', d.created_at) ORDER BY d.weight_percentage DESC) FILTER (WHERE d.id IS NOT NULL), \'[]\'::json) AS domains FROM exams e LEFT JOIN domains d ON d.exam_id = e.id GROUP BY e.id ORDER BY e.created_at DESC'
+      'SELECT e.id, e.code, e.title, e.description, e.display_order, e.duration_minutes, e.total_questions, e.passing_score_percentage, e.is_active, e.created_at, e.updated_at, COALESCE((SELECT COUNT(*) FROM domains d WHERE d.exam_id = e.id), 0) AS domain_count, COALESCE((SELECT COUNT(*) FROM questions q JOIN domains d2 ON d2.id = q.domain_id WHERE d2.exam_id = e.id), 0) AS question_count, COALESCE(json_agg(json_build_object(\'id\', d.id, \'name\', d.name, \'weight_percentage\', d.weight_percentage, \'created_at\', d.created_at) ORDER BY d.weight_percentage DESC) FILTER (WHERE d.id IS NOT NULL), \'[]\'::json) AS domains FROM exams e LEFT JOIN domains d ON d.exam_id = e.id GROUP BY e.id ORDER BY e.display_order ASC, e.title ASC'
     );
     return res.status(200).json({ exams: result.rows });
   } catch (error) {
@@ -597,7 +599,7 @@ router.patch('/exams/:id', async (req, res) => {
     return res.status(400).json({ message: 'Invalid exam id' });
   }
 
-  const { code, title, description, duration_minutes, total_questions, passing_score_percentage, is_active } = req.body;
+  const { code, title, description, display_order, duration_minutes, total_questions, passing_score_percentage, is_active } = req.body;
   const updates = [];
   const values = [];
 
@@ -613,6 +615,13 @@ router.patch('/exams/:id', async (req, res) => {
   }
   if (description !== undefined) {
     updates.push('description = $' + (updates.length + 1)); values.push(normalizeText(description) || null);
+  }
+  if (display_order !== undefined) {
+    try {
+      updates.push('display_order = $' + (updates.length + 1)); values.push(parseInteger(display_order, 'display_order', 0, 1000000));
+    } catch (error) {
+      return res.status(400).json({ message: error.message });
+    }
   }
   if (duration_minutes !== undefined) {
     try {
@@ -677,6 +686,49 @@ router.delete('/exams/:id', async (req, res) => {
     return res.status(200).json({ message: 'Exam deleted successfully', id });
   } catch (error) {
     return mapDbError(res, error, 'Delete exam error');
+  }
+});
+
+router.get('/question-issues', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT r.id, r.attempt_id, r.question_id, r.question_text,
+              r.issue_description, r.status, r.created_at, r.resolved_at,
+              u.full_name AS user_name, u.email AS user_email,
+              e.code AS exam_code, e.title AS exam_title
+       FROM question_issue_reports r
+       JOIN users u ON u.id = r.user_id
+       JOIN exam_attempts ea ON ea.id = r.attempt_id
+       JOIN exams e ON e.id = ea.exam_id
+       ORDER BY CASE WHEN r.status = 'open' THEN 0 ELSE 1 END, r.created_at DESC`
+    );
+    return res.status(200).json({ reports: result.rows });
+  } catch (error) {
+    return mapDbError(res, error, 'Get question issue reports error');
+  }
+});
+
+router.patch('/question-issues/:id', async (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body;
+  if (!isUuid(id)) return res.status(400).json({ message: 'Invalid issue report id' });
+  if (!['open', 'resolved'].includes(status)) {
+    return res.status(400).json({ message: 'status must be open or resolved' });
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE question_issue_reports
+       SET status = $1,
+           resolved_at = CASE WHEN $1 = 'resolved' THEN CURRENT_TIMESTAMP ELSE NULL END
+       WHERE id = $2
+       RETURNING id, status, resolved_at`,
+      [status, id]
+    );
+    if (!result.rows.length) return res.status(404).json({ message: 'Issue report not found' });
+    return res.status(200).json({ report: result.rows[0] });
+  } catch (error) {
+    return mapDbError(res, error, 'Update question issue report error');
   }
 });
 
@@ -1034,9 +1086,9 @@ router.post('/questions/bulk', async (req, res) => {
 router.get('/exams/export', async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT id, code, title, description, duration_minutes, total_questions, passing_score_percentage, is_active FROM exams ORDER BY code'
+      'SELECT id, code, title, description, display_order, duration_minutes, total_questions, passing_score_percentage, is_active FROM exams ORDER BY display_order, title'
     );
-    const headers = ['id', 'code', 'title', 'description', 'duration_minutes', 'total_questions', 'passing_score_percentage', 'is_active'];
+    const headers = ['id', 'code', 'title', 'description', 'display_order', 'duration_minutes', 'total_questions', 'passing_score_percentage', 'is_active'];
     res.type('text/csv; charset=utf-8');
     res.set('Content-Disposition', 'attachment; filename="exams.csv"');
     return res.status(200).send(serializeCsv(headers, result.rows));
@@ -1066,6 +1118,9 @@ router.post('/exams/import', async (req, res) => handleCsvImport(
       if (recordId) seenIds.add(recordId);
 
       const duration = parseCsvNumber(row.values.duration_minutes, 'duration_minutes', row, 1, 10000, true);
+      const displayOrder = row.values.display_order === undefined || row.values.display_order.trim() === ''
+        ? 0
+        : parseCsvNumber(row.values.display_order, 'display_order', row, 0, 1000000, true);
       const total = parseCsvNumber(row.values.total_questions, 'total_questions', row, 1, 10000, true);
       const passingScore = parseCsvNumber(row.values.passing_score_percentage, 'passing_score_percentage', row, 0, 100);
       const active = parseCsvBoolean(row.values.is_active, 'is_active', row);
@@ -1073,6 +1128,7 @@ router.post('/exams/import', async (req, res) => handleCsvImport(
         cleanCode.toUpperCase(),
         cleanTitle,
         normalizeText(description) || null,
+        displayOrder,
         duration,
         total,
         passingScore,
@@ -1081,21 +1137,21 @@ router.post('/exams/import', async (req, res) => handleCsvImport(
 
       if (recordId) {
         const result = await client.query(
-          'UPDATE exams SET code = $1, title = $2, description = $3, duration_minutes = $4, total_questions = $5, passing_score_percentage = $6, is_active = $7, updated_at = CURRENT_TIMESTAMP WHERE id = $8 RETURNING id',
+          'UPDATE exams SET code = $1, title = $2, description = $3, display_order = $4, duration_minutes = $5, total_questions = $6, passing_score_percentage = $7, is_active = $8, updated_at = CURRENT_TIMESTAMP WHERE id = $9 RETURNING id',
           [...values, recordId]
         );
         if (result.rows.length) {
           updated += 1;
         } else {
           await client.query(
-            'INSERT INTO exams (id, code, title, description, duration_minutes, total_questions, passing_score_percentage, is_active) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+            'INSERT INTO exams (id, code, title, description, display_order, duration_minutes, total_questions, passing_score_percentage, is_active) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
             [recordId, ...values]
           );
           created += 1;
         }
       } else {
         await client.query(
-          'INSERT INTO exams (code, title, description, duration_minutes, total_questions, passing_score_percentage, is_active) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+          'INSERT INTO exams (code, title, description, display_order, duration_minutes, total_questions, passing_score_percentage, is_active) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
           values
         );
         created += 1;

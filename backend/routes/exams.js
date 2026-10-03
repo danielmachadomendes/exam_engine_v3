@@ -4,6 +4,7 @@ const pool = require('../db');
 const { authenticateToken } = require('../middleware/auth');
 
 router.use(authenticateToken);
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Utility: Fisher-Yates array shuffle
 function shuffleArray(array) {
@@ -55,10 +56,11 @@ router.get('/', async (req, res) => {
         duration_minutes, 
         total_questions, 
         passing_score_percentage, 
-        is_active 
+        is_active,
+        display_order
       FROM exams 
       WHERE is_active = true 
-      ORDER BY title ASC`
+      ORDER BY display_order ASC, title ASC`
     );
 
     res.json(result.rows);
@@ -316,8 +318,9 @@ router.post('/:id/submit', async (req, res) => {
            user_answers = $2::jsonb,
            score_percentage = $3,
            is_passed = $4,
-           domain_scores = $5::jsonb
-       WHERE id = $6
+           domain_scores = $5::jsonb,
+           review_data = $6::jsonb
+       WHERE id = $7
        RETURNING *`,
       [
         parseInt(time_spent_seconds, 10),
@@ -325,6 +328,7 @@ router.post('/:id/submit', async (req, res) => {
         overallScorePct,
         isPassed,
         JSON.stringify(domainScores),
+        JSON.stringify(reviewDetails),
         attempt_id,
       ]
     );
@@ -347,6 +351,146 @@ router.post('/:id/submit', async (req, res) => {
     });
   } catch (error) {
     console.error('Exam submit error:', error);
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+router.get('/attempts/:attemptId/review', async (req, res) => {
+  const { attemptId } = req.params;
+  if (!UUID_PATTERN.test(attemptId)) {
+    return res.status(400).json({ message: 'Invalid attempt id' });
+  }
+
+  try {
+    const attemptRes = await pool.query(
+      `SELECT ea.id, ea.exam_id, ea.status, ea.user_answers, ea.review_data,
+              ea.score_percentage, ea.is_passed, ea.time_spent_seconds,
+              ea.completed_at, ea.domain_scores, e.code AS exam_code,
+              e.title AS exam_title, e.passing_score_percentage
+       FROM exam_attempts ea
+       JOIN exams e ON e.id = ea.exam_id
+       WHERE ea.id = $1 AND ea.user_id = $2`,
+      [attemptId, req.user.id]
+    );
+
+    if (!attemptRes.rows.length) {
+      return res.status(404).json({ message: 'Exam attempt not found' });
+    }
+
+    const attempt = attemptRes.rows[0];
+    if (attempt.status !== 'completed') {
+      return res.status(403).json({ message: 'Review is available after the exam is completed' });
+    }
+
+    let review = attempt.review_data;
+    if (!Array.isArray(review)) {
+      const questionIds = Object.keys(attempt.user_answers || {});
+      const questionsRes = await pool.query(
+        `SELECT q.id, q.domain_id, q.question_text, q.type, q.options,
+                q.correct_answers, q.explanation, d.name AS domain_name
+         FROM questions q
+         JOIN domains d ON d.id = q.domain_id
+         WHERE q.id = ANY($1::uuid[]) AND d.exam_id = $2`,
+        [questionIds, attempt.exam_id]
+      );
+      review = questionsRes.rows.map((question) => {
+        const userAnswers = attempt.user_answers[question.id] || [];
+        return {
+          question_id: question.id,
+          domain_id: question.domain_id,
+          domain_name: question.domain_name,
+          question_text: question.question_text,
+          type: question.type,
+          options: question.options,
+          user_answers: userAnswers,
+          correct_answers: question.correct_answers,
+          is_correct: areAnswersEqual(userAnswers, question.correct_answers, question.type),
+          explanation: question.explanation,
+        };
+      });
+    }
+
+    return res.status(200).json({
+      attempt: {
+        id: attempt.id,
+        exam_code: attempt.exam_code,
+        exam_title: attempt.exam_title,
+        score_percentage: attempt.score_percentage,
+        passing_score_percentage: attempt.passing_score_percentage,
+        is_passed: attempt.is_passed,
+        total_questions: review.length,
+        correct_answers_count: review.filter((question) => question.is_correct).length,
+        time_spent_seconds: attempt.time_spent_seconds,
+        completed_at: attempt.completed_at,
+        domain_scores: attempt.domain_scores,
+      },
+      review,
+    });
+  } catch (error) {
+    console.error('Fetch exam review error:', error);
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+router.post('/attempts/:attemptId/questions/:questionId/issues', async (req, res) => {
+  const { attemptId, questionId } = req.params;
+  const description =
+    typeof req.body?.description === 'string' ? req.body.description.trim() : '';
+
+  if (!UUID_PATTERN.test(attemptId) || !UUID_PATTERN.test(questionId)) {
+    return res.status(400).json({ message: 'Invalid attempt or question id' });
+  }
+  if (!description || description.length > 2000) {
+    return res.status(400).json({ message: 'Issue description must be between 1 and 2000 characters' });
+  }
+
+  try {
+    const attemptRes = await pool.query(
+      `SELECT ea.user_answers, ea.review_data
+       FROM exam_attempts ea
+       WHERE ea.id = $1 AND ea.user_id = $2 AND ea.status = 'completed'`,
+      [attemptId, req.user.id]
+    );
+    if (!attemptRes.rows.length) {
+      return res.status(404).json({ message: 'Completed exam attempt not found' });
+    }
+
+    const attempt = attemptRes.rows[0];
+    if (!Object.prototype.hasOwnProperty.call(attempt.user_answers || {}, questionId)) {
+      return res.status(404).json({ message: 'Question was not part of this exam attempt' });
+    }
+
+    const reviewItem = Array.isArray(attempt.review_data)
+      ? attempt.review_data.find((item) => item.question_id === questionId)
+      : null;
+    let questionText = reviewItem?.question_text;
+    const questionRes = await pool.query(
+      'SELECT id, question_text FROM questions WHERE id = $1',
+      [questionId]
+    );
+    if (!questionText && questionRes.rows.length) {
+      questionText = questionRes.rows[0].question_text;
+    }
+    if (!questionText) {
+      return res.status(404).json({ message: 'Question is no longer available for reporting' });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO question_issue_reports
+         (attempt_id, user_id, question_id, question_text, issue_description)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, status, created_at`,
+      [
+        attemptId,
+        req.user.id,
+        questionRes.rows.length ? questionId : null,
+        questionText,
+        description,
+      ]
+    );
+    return res.status(201).json({ message: 'Issue reported successfully', report: result.rows[0] });
+  } catch (error) {
+    console.error('Report question issue error:', error);
     return res.status(500).json({ message: 'Internal server error' });
   }
 });
