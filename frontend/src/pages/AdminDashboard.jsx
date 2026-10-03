@@ -633,20 +633,22 @@ function ExamsManagerTab({ notify }) {
         onClose={() => setExamModalOpen(false)}
       >
         <form onSubmit={handleCreateExam} className="space-y-4">
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">Dashboard order</label>
+            <input
+              type="number"
+              min="0"
+              max="1000000"
+              step="1"
+              required
+              value={examForm.display_order}
+              onChange={(e) => setExamForm({ ...examForm, display_order: e.target.value })}
+              className="w-full px-3 py-2 bg-slate-950/60 border border-slate-700/80 rounded-lg text-sm text-slate-100"
+            />
+          </div>
+
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">Dashboard order</label>
-              <input
-                type="number"
-                min="0"
-                max="1000000"
-                step="1"
-                required
-                value={examForm.display_order}
-                onChange={(e) => setExamForm({ ...examForm, display_order: e.target.value })}
-                className="w-full px-3 py-2 bg-slate-950/60 border border-slate-700/80 rounded-lg text-sm text-slate-100"
-              />
-            </div>
             <div>
               <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">Code</label>
               <input
