@@ -151,7 +151,7 @@ export default function Login() {
                 to="/register"
                 className="text-indigo-400 hover:text-indigo-300 font-semibold transition"
               >
-                Request Registration
+                Request registration
               </Link>
             </p>
           </div>
