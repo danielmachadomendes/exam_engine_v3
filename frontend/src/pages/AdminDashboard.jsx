@@ -60,7 +60,7 @@ export default function AdminDashboard() {
                   : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
               }`}
             >
-              <Users className="w-4 h-4" /> User Approvals
+              <Users className="w-4 h-4" /> User approvals
             </button>
 
             <button
