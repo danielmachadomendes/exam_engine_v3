@@ -52,6 +52,9 @@ export default function ExamRunner() {
   const [showConfirmModal, setShowConfirmModal] = useState(false);
 
   const timerRef = useRef(null);
+  const terminalActionRef = useRef(false);
+  const latestExamStateRef = useRef(null);
+  latestExamStateRef.current = { exam, questions, userAnswers, secondsRemaining };
 
   // Redireciona de volta se a página for aberta sem state e sem dados
   useEffect(() => {
@@ -71,9 +74,38 @@ export default function ExamRunner() {
     localStorage.setItem(`flags_${attemptId}`, JSON.stringify(updated));
   };
 
+  useEffect(() => {
+    const completeAttemptOnPageHide = () => {
+      if (terminalActionRef.current) return;
+      terminalActionRef.current = true;
+
+      const current = latestExamStateRef.current;
+      if (!current) return;
+
+      const durationSeconds = (current.exam?.duration_minutes || 90) * 60;
+      examApi.completeAttempt(
+        attemptId,
+        {
+          user_answers: current.questions.reduce((answers, question) => {
+            answers[question.id] = current.userAnswers[question.id] || [];
+            return answers;
+          }, {}),
+          time_spent_seconds: Math.max(0, durationSeconds - current.secondsRemaining),
+        },
+        { keepalive: true }
+      ).catch((error) => {
+        console.error('Failed to complete exam attempt on page exit:', error);
+      });
+    };
+
+    window.addEventListener('pagehide', completeAttemptOnPageHide);
+    return () => window.removeEventListener('pagehide', completeAttemptOnPageHide);
+  }, [attemptId]);
+
   // Submeter exame
   const handleSubmitExam = useCallback(async () => {
     if (submitting || exiting || result) return;
+    terminalActionRef.current = true;
     setSubmitting(true);
     clearInterval(timerRef.current);
 
@@ -101,16 +133,18 @@ export default function ExamRunner() {
     } catch (err) {
       console.error('Failed to submit exam:', err);
       alert('Error submitting exam: ' + (err.message || 'Please retry.'));
+      terminalActionRef.current = false;
       setSubmitting(false);
     }
   }, [submitting, exiting, result, exam, secondsRemaining, attemptId, userAnswers]);
 
   const handleExitExam = async () => {
     if (submitting || exiting || result) return;
-    if (!window.confirm('Log out of this exam? Your answers will be saved and the attempt marked complete, but it will not be graded.')) {
+    if (!window.confirm('Log out of this exam? Your answers will be saved and the attempt marked complete without a score or review.')) {
       return;
     }
 
+    terminalActionRef.current = true;
     setExiting(true);
     try {
       const durationSeconds = (exam?.duration_minutes || 90) * 60;
@@ -129,6 +163,7 @@ export default function ExamRunner() {
     } catch (err) {
       console.error('Failed to complete exam attempt:', err);
       alert('Error logging out of exam: ' + (err.message || 'Please retry.'));
+      terminalActionRef.current = false;
       setExiting(false);
     }
   };
