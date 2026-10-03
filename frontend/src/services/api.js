@@ -96,6 +96,19 @@ export const adminApi = {
   updateQuestion: (id, data) =>
     apiFetch(`/admin/questions/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteQuestion: (id) => apiFetch(`/admin/questions/${id}`, { method: 'DELETE' }),
+  getExamAttempts: (params = {}) => {
+    const query = new URLSearchParams(
+      Object.entries(params).filter(([, value]) => value !== undefined && value !== '')
+    ).toString();
+    return apiFetch(`/admin/exam-attempts${query ? `?${query}` : ''}`);
+  },
+  deleteExamAttempt: (id) => apiFetch(`/admin/exam-attempts/${id}`, { method: 'DELETE' }),
+  getAuditLogs: (params = {}) => {
+    const query = new URLSearchParams(
+      Object.entries(params).filter(([, value]) => value !== undefined && value !== '')
+    ).toString();
+    return apiFetch(`/admin/audit-logs${query ? `?${query}` : ''}`);
+  },
   getQuestionIssues: () => apiFetch('/admin/question-issues'),
   updateQuestionIssue: (id, status) =>
     apiFetch(`/admin/question-issues/${id}`, {
@@ -108,6 +121,11 @@ export const examApi = {
   startExam: (examId) => apiFetch(`/exams/${examId}/start`, { method: 'POST' }),
   submitExam: (examId, payload) =>
     apiFetch(`/exams/${examId}/submit`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  completeAttempt: (attemptId, payload) =>
+    apiFetch(`/exams/attempts/${attemptId}/complete`, {
       method: 'POST',
       body: JSON.stringify(payload),
     }),

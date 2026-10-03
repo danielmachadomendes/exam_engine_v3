@@ -22,6 +22,8 @@ import {
   BookOpen,
   Download,
   Flag,
+  ClipboardList,
+  ScrollText,
 } from 'lucide-react';
 
 const TABLE_ACTION_BUTTON_CLASS =
@@ -29,7 +31,7 @@ const TABLE_ACTION_BUTTON_CLASS =
 
 export default function AdminDashboard() {
   const { user, logout } = useAuth();
-  const [activeTab, setActiveTab] = useState('users'); // 'users' | 'exams' | 'domains' | 'questions' | 'issues'
+  const [activeTab, setActiveTab] = useState('users');
 
   // Feedback global
   const [notification, setNotification] = useState(null);
@@ -106,6 +108,28 @@ export default function AdminDashboard() {
             >
               <Flag className="w-4 h-4" /> Reported issues
             </button>
+
+            <button
+              onClick={() => setActiveTab('attempts')}
+              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium transition ${
+                activeTab === 'attempts'
+                  ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+              }`}
+            >
+              <ClipboardList className="w-4 h-4" /> Exam attempts
+            </button>
+
+            <button
+              onClick={() => setActiveTab('audit')}
+              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium transition ${
+                activeTab === 'audit'
+                  ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+              }`}
+            >
+              <ScrollText className="w-4 h-4" /> Audit log
+            </button>
           </nav>
         </div>
 
@@ -141,6 +165,8 @@ export default function AdminDashboard() {
         {activeTab === 'domains' && <DomainsManagerTab notify={showNotification} />}
         {activeTab === 'questions' && <QuestionManagerTab notify={showNotification} />}
         {activeTab === 'issues' && <QuestionIssuesTab notify={showNotification} />}
+        {activeTab === 'attempts' && <ExamAttemptsTab notify={showNotification} />}
+        {activeTab === 'audit' && <AuditLogsTab notify={showNotification} />}
       </main>
     </div>
   );
@@ -1859,6 +1885,253 @@ function QuestionIssuesTab({ notify }) {
               </div>
             </article>
           ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ExamAttemptsTab({ notify }) {
+  const [attempts, setAttempts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [appliedSearch, setAppliedSearch] = useState('');
+  const [status, setStatus] = useState('');
+  const [page, setPage] = useState(1);
+  const [reload, setReload] = useState(0);
+  const [pagination, setPagination] = useState({ page_size: 25, total: 0, total_pages: 0 });
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    adminApi.getExamAttempts({
+      page,
+      page_size: pagination.page_size,
+      search: appliedSearch,
+      status,
+    }).then((data) => {
+      if (cancelled) return;
+      const nextPagination = data.pagination || { page, page_size: 25, total: 0, total_pages: 0 };
+      setAttempts(data.attempts || []);
+      setPagination(nextPagination);
+      if (page > Math.max(nextPagination.total_pages, 1)) {
+        setPage(Math.max(nextPagination.total_pages, 1));
+      }
+    }).catch((error) => {
+      if (!cancelled) notify('error', error.message || 'Failed to load exam attempts');
+    }).finally(() => {
+      if (!cancelled) setLoading(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [page, pagination.page_size, appliedSearch, status, reload, notify]);
+
+  const deleteAttempt = async (attempt) => {
+    if (!window.confirm(`Delete this ${attempt.exam_code} attempt by ${attempt.user_name}? This action cannot be undone.`)) return;
+    try {
+      await adminApi.deleteExamAttempt(attempt.id);
+      notify('success', 'Exam attempt deleted successfully');
+      setReload((current) => current + 1);
+    } catch (error) {
+      notify('error', error.message || 'Failed to delete exam attempt');
+    }
+  };
+
+  return (
+    <section className="space-y-6">
+      <div>
+        <h2 className="text-2xl font-bold text-white tracking-tight">Exam attempts</h2>
+        <p className="text-sm text-slate-400">Review candidate attempt status, timing, and results. Exited attempts are complete but ungraded.</p>
+      </div>
+
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          setPage(1);
+          setAppliedSearch(search.trim());
+        }}
+        className="flex flex-wrap gap-3"
+      >
+        <input
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="Search candidate or exam"
+          className="min-w-56 flex-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100"
+        />
+        <select
+          value={status}
+          onChange={(event) => {
+            setPage(1);
+            setStatus(event.target.value);
+          }}
+          className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100"
+        >
+          <option value="">All statuses</option>
+          <option value="in_progress">In progress</option>
+          <option value="completed">Completed</option>
+          <option value="timed_out">Timed out</option>
+        </select>
+        <button type="submit" className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">
+          Search
+        </button>
+      </form>
+
+      {loading ? (
+        <div className="flex items-center gap-2 p-8 text-sm text-slate-400">
+          <Loader2 className="h-4 w-4 animate-spin" /> Loading exam attempts...
+        </div>
+      ) : pagination.total === 0 ? (
+        <p className="rounded-xl border border-slate-800 bg-slate-900 p-8 text-center text-sm text-slate-400">
+          No exam attempts match these filters.
+        </p>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-900">
+          <table className="w-full min-w-[900px] text-left text-sm">
+            <thead className="bg-slate-950/70 text-xs uppercase tracking-wide text-slate-400">
+              <tr>
+                <th className="px-4 py-3">Candidate</th>
+                <th className="px-4 py-3">Exam</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Started</th>
+                <th className="px-4 py-3">Completed</th>
+                <th className="px-4 py-3">Time</th>
+                <th className="px-4 py-3">Result</th>
+                <th className="px-4 py-3">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800">
+              {attempts.map((attempt) => (
+                <tr key={attempt.id} className="text-slate-300">
+                  <td className="px-4 py-3">
+                    <p className="font-medium text-white">{attempt.user_name}</p>
+                    <p className="text-xs text-slate-500">{attempt.user_email}</p>
+                  </td>
+                  <td className="px-4 py-3">
+                    <p className="font-semibold text-white">{attempt.exam_code}</p>
+                    <p className="text-xs text-slate-500">{attempt.exam_title}</p>
+                  </td>
+                  <td className="px-4 py-3">{attempt.status.replace('_', ' ')}</td>
+                  <td className="px-4 py-3">{new Date(attempt.started_at).toLocaleString()}</td>
+                  <td className="px-4 py-3">
+                    {attempt.completed_at ? new Date(attempt.completed_at).toLocaleString() : '—'}
+                  </td>
+                  <td className="px-4 py-3">
+                    {attempt.time_spent_seconds == null
+                      ? '—'
+                      : `${Math.floor(attempt.time_spent_seconds / 60)}m ${attempt.time_spent_seconds % 60}s`}
+                  </td>
+                  <td className="px-4 py-3">
+                    {attempt.score_percentage == null
+                      ? 'Ungraded'
+                      : `${attempt.score_percentage}% · ${attempt.is_passed ? 'Passed' : 'Failed'}`}
+                  </td>
+                  <td className="px-4 py-3">
+                    <button
+                      type="button"
+                      onClick={() => deleteAttempt(attempt)}
+                      aria-label={`Delete ${attempt.exam_code} attempt by ${attempt.user_name}`}
+                      className={`${TABLE_ACTION_BUTTON_CLASS} border-rose-500/20 bg-rose-600/10 text-rose-300 hover:bg-rose-600 hover:text-white`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" /> Delete
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <PaginationControls
+            page={page}
+            pageSize={pagination.page_size}
+            total={pagination.total}
+            totalPages={pagination.total_pages}
+            onPageChange={setPage}
+          />
+        </div>
+      )}
+    </section>
+  );
+}
+
+function AuditLogsTab({ notify }) {
+  const [logs, setLogs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState({ page_size: 25, total: 0, total_pages: 0 });
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    adminApi.getAuditLogs({ page, page_size: pagination.page_size })
+      .then((data) => {
+        if (cancelled) return;
+        setLogs(data.logs || []);
+        setPagination(data.pagination || { page, page_size: 25, total: 0, total_pages: 0 });
+      })
+      .catch((error) => {
+        if (!cancelled) notify('error', error.message || 'Failed to load audit logs');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [page, pagination.page_size, notify]);
+
+  return (
+    <section className="space-y-6">
+      <div>
+        <h2 className="text-2xl font-bold text-white tracking-tight">Administrative audit log</h2>
+        <p className="text-sm text-slate-400">A record of administrative creations, edits, status changes, imports, and deletions.</p>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center gap-2 p-8 text-sm text-slate-400">
+          <Loader2 className="h-4 w-4 animate-spin" /> Loading audit log...
+        </div>
+      ) : pagination.total === 0 ? (
+        <p className="rounded-xl border border-slate-800 bg-slate-900 p-8 text-center text-sm text-slate-400">
+          No administrative actions have been recorded.
+        </p>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-900">
+          <table className="w-full min-w-[850px] text-left text-sm">
+            <thead className="bg-slate-950/70 text-xs uppercase tracking-wide text-slate-400">
+              <tr>
+                <th className="px-4 py-3">When</th>
+                <th className="px-4 py-3">Administrator</th>
+                <th className="px-4 py-3">Action</th>
+                <th className="px-4 py-3">Record</th>
+                <th className="px-4 py-3">Details</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800">
+              {logs.map((entry) => (
+                <tr key={entry.id} className="text-slate-300">
+                  <td className="whitespace-nowrap px-4 py-3">{new Date(entry.created_at).toLocaleString()}</td>
+                  <td className="px-4 py-3">{entry.actor_email}</td>
+                  <td className="px-4 py-3">{entry.action.replace('_', ' ')}</td>
+                  <td className="px-4 py-3">
+                    <p className="font-medium text-white">{entry.entity}</p>
+                    <p className="break-all text-xs text-slate-500">{entry.entity_id || '—'}</p>
+                  </td>
+                  <td className="max-w-sm break-words px-4 py-3 text-xs text-slate-400">
+                    {JSON.stringify(entry.details)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <PaginationControls
+            page={page}
+            pageSize={pagination.page_size}
+            total={pagination.total}
+            totalPages={pagination.total_pages}
+            onPageChange={setPage}
+          />
         </div>
       )}
     </section>
