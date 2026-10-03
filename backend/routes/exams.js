@@ -428,6 +428,9 @@ router.get('/attempts/:attemptId/review', async (req, res) => {
     if (attempt.status !== 'completed') {
       return res.status(403).json({ message: 'Review is available after the exam is completed' });
     }
+    if (attempt.score_percentage === null) {
+      return res.status(403).json({ message: 'Review is not available for this completed exam attempt' });
+    }
 
     let review = attempt.review_data;
     if (!Array.isArray(review)) {

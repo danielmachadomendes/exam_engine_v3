@@ -124,10 +124,11 @@ export const examApi = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  completeAttempt: (attemptId, payload) =>
+  completeAttempt: (attemptId, payload, { keepalive = false } = {}) =>
     apiFetch(`/exams/attempts/${attemptId}/complete`, {
       method: 'POST',
       body: JSON.stringify(payload),
+      keepalive,
     }),
   getAttemptReview: (attemptId) => apiFetch(`/exams/attempts/${attemptId}/review`),
   reportQuestionIssue: (attemptId, questionId, description) =>

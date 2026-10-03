@@ -197,7 +197,7 @@ export default function UserDashboard() {
                   {profile.attempts.map((attempt) => (
                     <tr key={attempt.attempt_id} className="hover:bg-slate-850/40 transition">
                       <td className="py-3.5 px-6 font-semibold text-white">
-                        {attempt.status === 'completed' ? (
+                        {attempt.status === 'completed' && attempt.score_percentage !== null ? (
                           <button
                             type="button"
                             onClick={() => navigate(`/exam/${attempt.attempt_id}/results`)}
@@ -228,7 +228,9 @@ export default function UserDashboard() {
                           </span>
                         )}
                         {attempt.is_passed === null && (
-                          <span className="text-slate-500">Incomplete</span>
+                          <span className="text-slate-500">
+                            {attempt.status === 'completed' ? 'Not graded' : 'Incomplete'}
+                          </span>
                         )}
                       </td>
                       <td className="py-3.5 px-6 text-slate-400">
