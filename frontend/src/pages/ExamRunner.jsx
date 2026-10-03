@@ -588,14 +588,6 @@ export default function ExamRunner() {
             </div>
           </div>
 
-          <div className="mt-6 border-t border-slate-800/80 pt-4">
-            <button
-              onClick={() => setShowConfirmModal(true)}
-              className="w-full py-2.5 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-200 rounded-xl text-xs font-bold uppercase tracking-wider transition"
-            >
-              End & Submit
-            </button>
-          </div>
         </aside>
       </div>
 
