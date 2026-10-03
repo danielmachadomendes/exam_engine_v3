@@ -31,6 +31,7 @@ CREATE TABLE exams (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     code VARCHAR(50) UNIQUE NOT NULL, -- Ex: 'CSA', 'CAD', 'CIS-ITSM'
     title VARCHAR(255) NOT NULL,
+    display_order INT NOT NULL DEFAULT 0,
     description TEXT,
     duration_minutes INT NOT NULL DEFAULT 90,
     total_questions INT NOT NULL DEFAULT 60,
@@ -86,7 +87,20 @@ CREATE TABLE exam_attempts (
     user_answers JSONB DEFAULT '{}'::jsonb,
     score_percentage NUMERIC(5, 2),
     is_passed BOOLEAN,
-    domain_scores JSONB DEFAULT '{}'::jsonb
+    domain_scores JSONB DEFAULT '{}'::jsonb,
+    review_data JSONB
+);
+
+CREATE TABLE question_issue_reports (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    attempt_id UUID NOT NULL REFERENCES exam_attempts(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    question_id UUID REFERENCES questions(id) ON DELETE SET NULL,
+    question_text TEXT NOT NULL,
+    issue_description TEXT NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved')),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    resolved_at TIMESTAMP WITH TIME ZONE
 );
 
 -- =====================================================
@@ -106,3 +120,5 @@ CREATE INDEX idx_exams_code_trgm ON exams USING GIN (code gin_trgm_ops);
 CREATE INDEX idx_exams_title_trgm ON exams USING GIN (title gin_trgm_ops);
 CREATE INDEX idx_exam_attempts_user_id ON exam_attempts(user_id);
 CREATE INDEX idx_exam_attempts_exam_id ON exam_attempts(exam_id);
+CREATE INDEX idx_exams_display_order ON exams(display_order, title);
+CREATE INDEX idx_question_issue_reports_status_created_at ON question_issue_reports(status, created_at DESC);
