@@ -355,6 +355,53 @@ router.post('/:id/submit', async (req, res) => {
   }
 });
 
+router.post('/attempts/:attemptId/complete', async (req, res) => {
+  const { attemptId } = req.params;
+  const { user_answers, time_spent_seconds } = req.body;
+
+  if (!UUID_PATTERN.test(attemptId)) {
+    return res.status(400).json({ message: 'Invalid attempt id' });
+  }
+  if (!user_answers || typeof user_answers !== 'object' || Array.isArray(user_answers)) {
+    return res.status(400).json({ message: 'user_answers must be an object' });
+  }
+  if (!Number.isSafeInteger(time_spent_seconds) || time_spent_seconds < 0) {
+    return res.status(400).json({ message: 'time_spent_seconds must be a non-negative integer' });
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE exam_attempts
+       SET status = 'completed',
+           completed_at = CURRENT_TIMESTAMP,
+           time_spent_seconds = $1,
+           user_answers = $2::jsonb
+       WHERE id = $3 AND user_id = $4 AND status = 'in_progress'
+       RETURNING id, status, completed_at`,
+      [time_spent_seconds, JSON.stringify(user_answers), attemptId, req.user.id]
+    );
+
+    if (!result.rows.length) {
+      const existing = await pool.query(
+        'SELECT status FROM exam_attempts WHERE id = $1 AND user_id = $2',
+        [attemptId, req.user.id]
+      );
+      if (!existing.rows.length) {
+        return res.status(404).json({ message: 'Exam attempt not found' });
+      }
+      return res.status(409).json({ message: 'This exam attempt is no longer in progress' });
+    }
+
+    return res.status(200).json({
+      message: 'Exam attempt completed',
+      attempt: result.rows[0],
+    });
+  } catch (error) {
+    console.error('Exam completion error:', error);
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
 router.get('/attempts/:attemptId/review', async (req, res) => {
   const { attemptId } = req.params;
   if (!UUID_PATTERN.test(attemptId)) {

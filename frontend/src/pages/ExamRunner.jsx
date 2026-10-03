@@ -47,6 +47,7 @@ export default function ExamRunner() {
 
   // Submissão e Resultados
   const [submitting, setSubmitting] = useState(false);
+  const [exiting, setExiting] = useState(false);
   const [result, setResult] = useState(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
 
@@ -72,7 +73,7 @@ export default function ExamRunner() {
 
   // Submeter exame
   const handleSubmitExam = useCallback(async () => {
-    if (submitting || result) return;
+    if (submitting || exiting || result) return;
     setSubmitting(true);
     clearInterval(timerRef.current);
 
@@ -102,11 +103,39 @@ export default function ExamRunner() {
       alert('Error submitting exam: ' + (err.message || 'Please retry.'));
       setSubmitting(false);
     }
-  }, [submitting, result, exam, secondsRemaining, attemptId, userAnswers]);
+  }, [submitting, exiting, result, exam, secondsRemaining, attemptId, userAnswers]);
+
+  const handleExitExam = async () => {
+    if (submitting || exiting || result) return;
+    if (!window.confirm('Log out of this exam? Your answers will be saved and the attempt marked complete, but it will not be graded.')) {
+      return;
+    }
+
+    setExiting(true);
+    try {
+      const durationSeconds = (exam?.duration_minutes || 90) * 60;
+      await examApi.completeAttempt(attemptId, {
+        user_answers: questions.reduce((answers, question) => {
+          answers[question.id] = userAnswers[question.id] || [];
+          return answers;
+        }, {}),
+        time_spent_seconds: Math.max(0, durationSeconds - secondsRemaining),
+      });
+
+      localStorage.removeItem(`answers_${attemptId}`);
+      localStorage.removeItem(`flags_${attemptId}`);
+      localStorage.removeItem(`timer_${attemptId}`);
+      navigate('/dashboard');
+    } catch (err) {
+      console.error('Failed to complete exam attempt:', err);
+      alert('Error logging out of exam: ' + (err.message || 'Please retry.'));
+      setExiting(false);
+    }
+  };
 
   // Timer de Contagem Regressiva
   useEffect(() => {
-    if (result) return;
+    if (result || submitting || exiting) return;
 
     timerRef.current = setInterval(() => {
       setSecondsRemaining((prev) => {
@@ -125,7 +154,7 @@ export default function ExamRunner() {
     }, 1000);
 
     return () => clearInterval(timerRef.current);
-  }, [attemptId, handleSubmitExam, result]);
+  }, [attemptId, handleSubmitExam, result, submitting, exiting]);
 
   // Formatação do Relógio HH:MM:SS
   const formatTime = (secs) => {
@@ -305,12 +334,23 @@ export default function ExamRunner() {
           <span>{formatTime(secondsRemaining)}</span>
         </div>
 
-        <button
-          onClick={() => setShowConfirmModal(true)}
-          className="flex items-center gap-1.5 py-1.5 px-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold uppercase tracking-wider transition shadow-lg shadow-emerald-600/20"
-        >
-          <Send className="w-3.5 h-3.5" /> Submit Exam
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleExitExam}
+            disabled={submitting || exiting}
+            className="flex items-center gap-1.5 py-1.5 px-3 border border-slate-700 hover:border-rose-500/50 text-slate-300 hover:text-rose-300 disabled:opacity-50 rounded-lg text-xs font-bold uppercase tracking-wider transition"
+          >
+            {exiting ? 'Logging out...' : 'Log out'}
+          </button>
+          <button
+            onClick={() => setShowConfirmModal(true)}
+            disabled={submitting || exiting}
+            className="flex items-center gap-1.5 py-1.5 px-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold uppercase tracking-wider transition shadow-lg shadow-emerald-600/20 disabled:opacity-50"
+          >
+            <Send className="w-3.5 h-3.5" /> Submit Exam
+          </button>
+        </div>
       </header>
 
       {/* Main Body */}

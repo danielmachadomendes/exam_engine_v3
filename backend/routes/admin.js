@@ -4,6 +4,7 @@ const bcrypt = require('bcrypt');
 const pool = require('../db');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const { parseCsv, serializeCsv, requireHeaders } = require('../utils/csv');
+const { insertAuditLog, runAdminMutation } = require('../utils/adminAudit');
 
 router.use(authenticateToken, requireAdmin);
 
@@ -218,6 +219,11 @@ async function handleCsvImport(req, res, requiredHeaders, defaultMessage, proces
     await client.query('BEGIN');
     transactionStarted = true;
     const result = await processRows(client, rows);
+    await insertAuditLog(client, req, {
+      action: 'import',
+      entity: req.path.split('/')[1],
+      details: { created: result.created, updated: result.updated },
+    });
     await client.query('COMMIT');
     return res.status(200).json({
       message: `Import complete: ${result.created} created, ${result.updated} updated.`,
@@ -328,7 +334,9 @@ router.post('/users', async (req, res) => {
 
   try {
     const passwordHash = await bcrypt.hash(password, 10);
-    const result = await pool.query(
+    const result = await runAdminMutation(
+      req,
+      { action: 'create', entity: 'user', details: { fields: ['full_name', 'email', 'role', 'status'] } },
       'INSERT INTO users (full_name, email, password_hash, role, status) VALUES ($1, $2, $3, $4, $5) RETURNING id, full_name, email, role, status, created_at, updated_at',
       [name, normalizedEmail, passwordHash, role, status]
     );
@@ -390,7 +398,9 @@ router.patch('/users/:id', async (req, res) => {
   values.push(id);
 
   try {
-    const result = await pool.query(
+    const result = await runAdminMutation(
+      req,
+      { action: 'update', entity: 'user', entityId: id, details: { fields: Object.keys(req.body) } },
       'UPDATE users SET ' + updates.join(', ') + ', updated_at = CURRENT_TIMESTAMP WHERE id = $' + values.length + ' RETURNING id, full_name, email, role, status, created_at, updated_at',
       values
     );
@@ -410,7 +420,12 @@ router.delete('/users/:id', async (req, res) => {
   }
 
   try {
-    const result = await pool.query('DELETE FROM users WHERE id = $1 RETURNING id', [id]);
+    const result = await runAdminMutation(
+      req,
+      { action: 'delete', entity: 'user', entityId: id },
+      'DELETE FROM users WHERE id = $1 RETURNING id',
+      [id]
+    );
     if (!result.rows.length) {
       return res.status(404).json({ message: 'User not found' });
     }
@@ -433,7 +448,9 @@ router.patch('/users/:id/status', async (req, res) => {
   }
 
   try {
-    const result = await pool.query(
+    const result = await runAdminMutation(
+      req,
+      { action: 'status_change', entity: 'user', entityId: id, details: { status } },
       'UPDATE users SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING id, full_name, email, role, status, updated_at',
       [status, id]
     );
@@ -565,7 +582,9 @@ router.post('/exams', async (req, res) => {
     const passingScore = parseDecimal(passing_score_pct, 'passing_score_pct', 0, 100);
     const displayOrder = parseInteger(display_order, 'display_order', 0, 1000000);
 
-    const result = await pool.query(
+    const result = await runAdminMutation(
+      req,
+      { action: 'create', entity: 'exam', details: { fields: ['code', 'title', 'display_order', 'description', 'duration_minutes', 'total_questions', 'passing_score_percentage', 'is_active'] } },
       'INSERT INTO exams (code, title, display_order, description, duration_minutes, total_questions, passing_score_percentage, is_active) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
       [cleanCode.trim().toUpperCase(), cleanTitle.trim(), displayOrder, normalizeText(description) || null, duration, total, passingScore, Boolean(is_active)]
     );
@@ -656,7 +675,9 @@ router.patch('/exams/:id', async (req, res) => {
   values.push(id);
 
   try {
-    const result = await pool.query(
+    const result = await runAdminMutation(
+      req,
+      { action: 'update', entity: 'exam', entityId: id, details: { fields: Object.keys(req.body) } },
       'UPDATE exams SET ' + updates.join(', ') + ', updated_at = CURRENT_TIMESTAMP WHERE id = $' + values.length + ' RETURNING *',
       values
     );
@@ -679,7 +700,12 @@ router.delete('/exams/:id', async (req, res) => {
   }
 
   try {
-    const result = await pool.query('DELETE FROM exams WHERE id = $1 RETURNING id', [id]);
+    const result = await runAdminMutation(
+      req,
+      { action: 'delete', entity: 'exam', entityId: id },
+      'DELETE FROM exams WHERE id = $1 RETURNING id',
+      [id]
+    );
     if (!result.rows.length) {
       return res.status(404).json({ message: 'Exam not found' });
     }
@@ -708,6 +734,104 @@ router.get('/question-issues', async (req, res) => {
   }
 });
 
+router.get('/exam-attempts', async (req, res) => {
+  const { status, search } = req.query;
+  const pagination = parsePagination(req.query);
+  if (pagination.error) return res.status(400).json({ message: pagination.error });
+  if (status && !['in_progress', 'completed', 'timed_out'].includes(String(status))) {
+    return res.status(400).json({ message: 'Invalid attempt status' });
+  }
+
+  const filters = [];
+  const values = [];
+  if (status) {
+    filters.push('ea.status = $' + (filters.length + 1));
+    values.push(String(status));
+  }
+  if (search) {
+    const placeholder = '$' + (filters.length + 1);
+    filters.push('(u.full_name ILIKE ' + placeholder + ' OR u.email ILIKE ' + placeholder + ' OR e.code ILIKE ' + placeholder + ' OR e.title ILIKE ' + placeholder + ')');
+    values.push('%' + String(search).trim() + '%');
+  }
+  const where = filters.length ? 'WHERE ' + filters.join(' AND ') : '';
+  const joins = ' FROM exam_attempts ea JOIN users u ON u.id = ea.user_id JOIN exams e ON e.id = ea.exam_id ';
+
+  try {
+    const countResult = await pool.query(
+      'SELECT COUNT(*)::int AS total' + joins + where,
+      values
+    );
+    const result = await pool.query(
+      `SELECT ea.id, ea.user_id, u.full_name AS user_name, u.email AS user_email,
+              ea.exam_id, e.code AS exam_code, e.title AS exam_title, ea.status,
+              ea.started_at, ea.completed_at, ea.time_spent_seconds,
+              ea.score_percentage, ea.is_passed
+       ${joins} ${where}
+       ORDER BY ea.started_at DESC, ea.id DESC
+       LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+      [...values, pagination.pageSize, pagination.offset]
+    );
+    const total = countResult.rows[0].total;
+    return res.status(200).json({
+      attempts: result.rows,
+      pagination: {
+        page: pagination.page,
+        page_size: pagination.pageSize,
+        total,
+        total_pages: Math.ceil(total / pagination.pageSize),
+      },
+    });
+  } catch (error) {
+    return mapDbError(res, error, 'Get exam attempts error');
+  }
+});
+
+router.delete('/exam-attempts/:id', async (req, res) => {
+  const { id } = req.params;
+  if (!isUuid(id)) return res.status(400).json({ message: 'Invalid attempt id' });
+
+  try {
+    const result = await runAdminMutation(
+      req,
+      { action: 'delete', entity: 'exam_attempt', entityId: id },
+      'DELETE FROM exam_attempts WHERE id = $1 RETURNING id',
+      [id]
+    );
+    if (!result.rows.length) return res.status(404).json({ message: 'Exam attempt not found' });
+    return res.status(200).json({ message: 'Exam attempt deleted successfully', id });
+  } catch (error) {
+    return mapDbError(res, error, 'Delete exam attempt error');
+  }
+});
+
+router.get('/audit-logs', async (req, res) => {
+  const pagination = parsePagination(req.query);
+  if (pagination.error) return res.status(400).json({ message: pagination.error });
+
+  try {
+    const countResult = await pool.query('SELECT COUNT(*)::int AS total FROM admin_audit_logs');
+    const result = await pool.query(
+      `SELECT id, actor_email, action, entity, entity_id, details, created_at
+       FROM admin_audit_logs
+       ORDER BY created_at DESC, id DESC
+       LIMIT $1 OFFSET $2`,
+      [pagination.pageSize, pagination.offset]
+    );
+    const total = countResult.rows[0].total;
+    return res.status(200).json({
+      logs: result.rows,
+      pagination: {
+        page: pagination.page,
+        page_size: pagination.pageSize,
+        total,
+        total_pages: Math.ceil(total / pagination.pageSize),
+      },
+    });
+  } catch (error) {
+    return mapDbError(res, error, 'Get admin audit logs error');
+  }
+});
+
 router.patch('/question-issues/:id', async (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
@@ -717,7 +841,9 @@ router.patch('/question-issues/:id', async (req, res) => {
   }
 
   try {
-    const result = await pool.query(
+    const result = await runAdminMutation(
+      req,
+      { action: 'update', entity: 'question_issue_report', entityId: id, details: { status } },
       `UPDATE question_issue_reports
        SET status = $1,
            resolved_at = CASE WHEN $1 = 'resolved' THEN CURRENT_TIMESTAMP ELSE NULL END
@@ -749,7 +875,9 @@ router.post('/domains', async (req, res) => {
     if (!exam) return res.status(404).json({ message: 'Target exam not found' });
     await validateDomainWeight(examId, weight);
 
-    const result = await pool.query(
+    const result = await runAdminMutation(
+      req,
+      { action: 'create', entity: 'domain', details: { fields: ['exam_id', 'name', 'weight_percentage'] } },
       'INSERT INTO domains (exam_id, name, weight_percentage) VALUES ($1, $2, $3) RETURNING *',
       [examId, cleanedName, weight]
     );
@@ -800,7 +928,9 @@ router.patch('/domains/:id', async (req, res) => {
     if (!exam) return res.status(404).json({ message: 'Target exam not found' });
     await validateDomainWeight(examId, weight, id);
 
-    const result = await pool.query(
+    const result = await runAdminMutation(
+      req,
+      { action: 'update', entity: 'domain', entityId: id, details: { fields: Object.keys(req.body) } },
       'UPDATE domains SET exam_id = $1, name = $2, weight_percentage = $3 WHERE id = $4 RETURNING *',
       [examId, cleanedName, weight, id]
     );
@@ -823,7 +953,12 @@ router.delete('/domains/:id', async (req, res) => {
   }
 
   try {
-    const result = await pool.query('DELETE FROM domains WHERE id = $1 RETURNING id', [id]);
+    const result = await runAdminMutation(
+      req,
+      { action: 'delete', entity: 'domain', entityId: id },
+      'DELETE FROM domains WHERE id = $1 RETURNING id',
+      [id]
+    );
     if (!result.rows.length) {
       return res.status(404).json({ message: 'Domain not found' });
     }
@@ -853,7 +988,9 @@ router.post('/questions', async (req, res) => {
     const domain = await ensureDomainExists(domainId);
     if (!domain) return res.status(404).json({ message: 'Target domain not found' });
 
-    const result = await pool.query(
+    const result = await runAdminMutation(
+      req,
+      { action: 'create', entity: 'question', details: { fields: ['domain_id', 'question_text', 'type', 'options', 'correct_answers', 'explanation', 'is_active'] } },
       'INSERT INTO questions (domain_id, question_text, type, options, correct_answers, explanation, is_active) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7) RETURNING *',
       [domainId, text, kind, JSON.stringify(options), JSON.stringify(correct_answers), normalizeText(explanation) || null, Boolean(is_active)]
     );
@@ -991,7 +1128,9 @@ router.patch('/questions/:id', async (req, res) => {
       if (contentError) return res.status(400).json({ message: contentError });
     }
 
-    const result = await pool.query(
+    const result = await runAdminMutation(
+      req,
+      { action: 'update', entity: 'question', entityId: id, details: { fields: Object.keys(req.body) } },
       'UPDATE questions SET ' + updates.join(', ') + ', updated_at = CURRENT_TIMESTAMP WHERE id = $' + values.length + ' RETURNING *',
       values
     );
@@ -1011,7 +1150,12 @@ router.delete('/questions/:id', async (req, res) => {
   }
 
   try {
-    const result = await pool.query('DELETE FROM questions WHERE id = $1 RETURNING id', [id]);
+    const result = await runAdminMutation(
+      req,
+      { action: 'delete', entity: 'question', entityId: id },
+      'DELETE FROM questions WHERE id = $1 RETURNING id',
+      [id]
+    );
     if (!result.rows.length) {
       return res.status(404).json({ message: 'Question not found' });
     }
@@ -1073,6 +1217,11 @@ router.post('/questions/bulk', async (req, res) => {
       );
     }
 
+    await insertAuditLog(client, req, {
+      action: 'bulk_create',
+      entity: 'question',
+      details: { count: questions.length },
+    });
     await client.query('COMMIT');
     return res.status(201).json({ message: questions.length + ' questions uploaded successfully' });
   } catch (error) {
