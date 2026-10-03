@@ -49,7 +49,7 @@ export default function Register() {
                 to="/login"
                 className="inline-flex items-center justify-center gap-2 w-full py-2.5 px-4 rounded-lg text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition"
               >
-                <ArrowLeft className="w-4 h-4" /> Back to Sign In
+                <ArrowLeft className="w-4 h-4" /> Back to sign in
               </Link>
             </div>
           ) : (
@@ -115,7 +115,7 @@ export default function Register() {
                       <Loader2 className="w-4 h-4 animate-spin" /> Submitting...
                     </>
                   ) : (
-                    'Request Access'
+                    'Request access'
                   )}
                 </button>
               </form>
@@ -127,7 +127,7 @@ export default function Register() {
                     to="/login"
                     className="text-indigo-400 hover:text-indigo-300 font-semibold transition"
                   >
-                    Sign In
+                    Sign in
                   </Link>
                 </p>
               </div>

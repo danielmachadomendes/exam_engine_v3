@@ -138,7 +138,7 @@ export default function Login() {
                 </>
               ) : (
                 <>
-                  Sign In <ArrowRight className="w-4 h-4" />
+                  Sign in <ArrowRight className="w-4 h-4" />
                 </>
               )}
             </button>

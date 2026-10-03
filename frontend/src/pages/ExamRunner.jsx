@@ -402,10 +402,10 @@ export default function ExamRunner() {
                   </span>
                   <p className="text-xs text-slate-400 mt-0.5">
                     {currentQ.type === 'multiple_choice'
-                      ? 'Select all applicable options (Multiple Choice)'
+                      ? 'Select all applicable options'
                       : currentQ.type === 'drag_and_drop'
                         ? 'Drag each answer to its matching prompt, or use the selectors.'
-                        : 'Select one option (Single Choice)'}
+                        : 'Select one option'}
                   </p>
                 </div>
 
@@ -422,7 +422,7 @@ export default function ExamRunner() {
                       flaggedQuestions[currentQ.id] ? 'fill-amber-400' : ''
                     }`}
                   />
-                  {flaggedQuestions[currentQ.id] ? 'Flagged' : 'Flag for Review'}
+                  {flaggedQuestions[currentQ.id] ? 'Flagged' : 'Flag for review'}
                 </button>
               </div>
 

@@ -137,7 +137,7 @@ export default function AdminDashboard() {
           onClick={logout}
           className="mt-8 flex items-center gap-2 px-3.5 py-2 text-sm font-medium text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition"
         >
-          <LogOut className="w-4 h-4" /> Sign Out
+          <LogOut className="w-4 h-4" /> Sign out
         </button>
       </aside>
 
