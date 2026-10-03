@@ -160,11 +160,14 @@ router.post('/:id/start', async (req, res) => {
     const randomizedQuestions = shuffleArray(selectedQuestions);
 
     // 5. Open an in_progress attempt record in DB
+    const initialAnswers = Object.fromEntries(
+      randomizedQuestions.map(question => [question.id, []])
+    );
     const attemptRes = await pool.query(
-      `INSERT INTO exam_attempts (user_id, exam_id, status, started_at)
-       VALUES ($1, $2, 'in_progress', CURRENT_TIMESTAMP)
+      `INSERT INTO exam_attempts (user_id, exam_id, status, started_at, user_answers)
+       VALUES ($1, $2, 'in_progress', CURRENT_TIMESTAMP, $3::jsonb)
        RETURNING id, started_at`,
-      [user_id, exam.id]
+      [user_id, exam.id, JSON.stringify(initialAnswers)]
     );
 
     // 6. Return payload (correct_answers and explanations are excluded)
@@ -225,22 +228,33 @@ router.post('/:id/submit', async (req, res) => {
       return res.status(400).json({ message: 'This exam attempt has already been submitted' });
     }
 
-    const questionIds = Object.keys(user_answers);
+    // Attempts started after this change retain their full randomized question set.
+    // For attempts already in progress during deployment, use the submitted question IDs.
+    const questionIds = Object.keys(attempt.user_answers || {});
     if (questionIds.length === 0) {
-      return res.status(400).json({ message: 'No answers provided for grading' });
+      questionIds.push(...Object.keys(user_answers));
     }
+
+    if (questionIds.length === 0) {
+      return res.status(400).json({ message: 'No questions available for grading' });
+    }
+
+    const answersForAttempt = Object.fromEntries(
+      questionIds.map(questionId => [questionId, user_answers[questionId] || []])
+    );
 
     // 2. Fetch full question specs from DB (with correct_answers & explanations)
     const questionsRes = await pool.query(
       `SELECT q.id, q.domain_id, q.question_text, q.type, q.options, q.correct_answers, q.explanation, d.name AS domain_name
        FROM questions q
        JOIN domains d ON q.domain_id = d.id
-       WHERE q.id = ANY($1::uuid[])`,
-      [questionIds]
+       WHERE q.id = ANY($1::uuid[]) AND d.exam_id = $2`,
+      [questionIds, exam_id]
     );
 
-    const questionsMap = new Map();
-    questionsRes.rows.forEach(q => questionsMap.set(q.id, q));
+    if (questionsRes.rows.length === 0) {
+      return res.status(400).json({ message: 'No questions available for grading' });
+    }
 
     // 3. Evaluate responses and calculate domain metrics
     let totalQuestions = questionsRes.rows.length;
@@ -249,7 +263,7 @@ router.post('/:id/submit', async (req, res) => {
     const reviewDetails = [];
 
     questionsRes.rows.forEach(q => {
-      const uAnswers = user_answers[q.id] || [];
+      const uAnswers = answersForAttempt[q.id] || [];
       const isCorrect = areAnswersEqual(uAnswers, q.correct_answers, q.type);
 
       if (isCorrect) correctCount++;
@@ -307,7 +321,7 @@ router.post('/:id/submit', async (req, res) => {
        RETURNING *`,
       [
         parseInt(time_spent_seconds, 10),
-        JSON.stringify(user_answers),
+        JSON.stringify(answersForAttempt),
         overallScorePct,
         isPassed,
         JSON.stringify(domainScores),

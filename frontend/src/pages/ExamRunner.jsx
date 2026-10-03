@@ -82,7 +82,10 @@ export default function ExamRunner() {
 
       const response = await examApi.submitExam(exam.id, {
         attempt_id: attemptId,
-        user_answers: userAnswers,
+        user_answers: questions.reduce((answers, question) => {
+          answers[question.id] = userAnswers[question.id] || [];
+          return answers;
+        }, {}),
         time_spent_seconds: timeSpent,
       });
 
